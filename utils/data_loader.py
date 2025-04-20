@@ -21,7 +21,7 @@ class DataLoader:
         os.makedirs(USER_DATA_PATH, exist_ok=True)
         os.makedirs(FINANCIAL_KB_PATH, exist_ok=True)
     
-    def load_user_data(self, user_id: str = "default") -> Dict:
+    def load_user_data(self, user_id: str = "user") -> Dict:
         """
         Load user financial data from file.
         
@@ -116,7 +116,7 @@ class DataLoader:
             "last_updated": datetime.now().isoformat()
         }
     
-    def save_user_data(self, user_data: Dict, user_id: str = "default") -> bool:
+    def save_user_data(self, user_data: Dict, user_id: str = "user") -> bool:
         """
         Save user financial data to file.
         

@@ -1,11 +1,26 @@
-# requirements.txt
-anthropic==0.18.1
-streamlit==1.32.0
-pandas==2.1.4
-numpy==1.26.3
-plotly==5.18.0
-python-dotenv==1.0.1
-faiss-cpu==1.7.4
-sentence-transformers==2.5.1
-pydantic==2.5.3
-jsonschema==4.21.1
+# Core
+streamlit
+python-dotenv
+
+# Data handling
+pandas
+numpy
+
+# Visualization
+plotly
+
+# Anthropic API
+anthropic
+
+# RAG & Embeddings
+faiss-cpu
+sentence-transformers
+
+# LangChain (core & integrations)
+langchain
+langchain-community
+langchain-huggingface
+
+# Validation
+pydantic
+jsonschema

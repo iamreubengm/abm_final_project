@@ -7,7 +7,8 @@ import json
 from datetime import datetime
 import time
 from dotenv import load_dotenv
-
+from datetime import datetime, timedelta
+import re
 # Load environment variables
 load_dotenv()
 
@@ -47,10 +48,9 @@ def initialize_components():
 def initialize_session_state():
     """Initialize session state variables if they don't exist."""
     if "user_data" not in st.session_state:
-        # Load default user data or create empty template
         data_loader = initialize_components()["data_loader"]
-        st.session_state.user_data = data_loader.generate_sample_user_data()
-    
+        st.session_state.user_data = data_loader.load_user_data("user")
+
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
     
@@ -76,6 +76,36 @@ st.set_page_config(
     layout=STREAMLIT_LAYOUT,
     initial_sidebar_state="expanded"
 )
+
+def format_llm_text(raw):
+    """
+    Takes LLM output and returns clean, HTML-formatted text.
+    Handles TextBlock, list, dict, or plain string.
+    """
+    import re
+
+    # If it's an object with .text, use that
+    if hasattr(raw, "text"):
+        raw = raw.text
+
+    # If it's a list, join it
+    elif isinstance(raw, list):
+        raw = " ".join(map(str, raw))
+
+    # Otherwise, stringify
+    else:
+        raw = str(raw)
+
+    # Clean up TextBlock(...) or similar wrappers
+    match = re.search(r"text=['\"](.*?)['\"]\)?$", raw, re.DOTALL)
+    if match:
+        raw = match.group(1)
+
+    # Decode escaped characters
+    clean = raw.encode().decode('unicode_escape')
+
+    # Final line break formatting
+    return clean
 
 # Main application function
 def main():
@@ -160,7 +190,6 @@ def main():
 def create_sidebar(components):
     """Create the sidebar with navigation and user info."""
     with st.sidebar:
-        st.image("https://via.placeholder.com/150x150.png?text=Finance+AI", width=150)
         st.title("Navigation")
         
         # Navigation buttons
@@ -212,30 +241,11 @@ def create_sidebar(components):
         # Data actions
         st.subheader("Actions")
         if st.button("Save Financial Data", use_container_width=True):
-            success = components["data_loader"].save_user_data(st.session_state.user_data)
+            success = components["data_loader"].save_user_data(st.session_state.user_data, user_id="user")
             if success:
                 st.success("Financial data saved successfully!")
             else:
                 st.error("Failed to save financial data")
-        
-        if st.button("Load Sample Data", use_container_width=True):
-            st.session_state.user_data = components["data_loader"].generate_sample_user_data()
-            st.success("Sample data loaded!")
-            st.rerun()
-        
-        if st.button("Clear All Data", use_container_width=True):
-            if st.session_state.get("confirm_clear", False):
-                st.session_state.user_data = components["data_loader"]._create_empty_user_data()
-                st.session_state.chat_history = []
-                st.session_state.agent_outputs = {}
-                st.session_state.transaction_data = []
-                st.session_state.portfolio_data = {"holdings": [], "total_value": 0, "asset_allocation": {}}
-                st.session_state.pop("confirm_clear", None)
-                st.success("All data cleared!")
-                st.rerun()
-            else:
-                st.session_state.confirm_clear = True
-                st.warning("Are you sure? Click again to confirm.")
         
         # Information
         st.markdown("---")
@@ -260,25 +270,31 @@ def show_dashboard_view(components):
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-value'>${net_worth_data['net_worth']:,.2f}</div>", unsafe_allow_html=True)
-        st.markdown("<div class='metric-label'>Net Worth</div>", unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-    
+        st.markdown(f"""
+            <div class='metric-card'>
+                <div class='metric-value'>${net_worth_data['net_worth']:,.2f}</div>
+                <div class='metric-label'>Net Worth</div>
+            </div>
+        """, unsafe_allow_html=True)
+
     with col2:
-        monthly_income = sum(user_data["income"].values())
-        st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-value'>${monthly_income:,.2f}</div>", unsafe_allow_html=True)
-        st.markdown("<div class='metric-label'>Monthly Income</div>", unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-    
+        monthly_income = sum(user_data["income"].values()) / 12
+        st.markdown(f"""
+            <div class='metric-card'>
+                <div class='metric-value'>${monthly_income:,.2f}</div>
+                <div class='metric-label'>Monthly Income</div>
+            </div>
+        """, unsafe_allow_html=True)
+
     with col3:
         monthly_expenses = sum(user_data["expenses"].values())
         savings_rate = ((monthly_income - monthly_expenses) / monthly_income) * 100 if monthly_income > 0 else 0
-        st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-value'>{savings_rate:.1f}%</div>", unsafe_allow_html=True)
-        st.markdown("<div class='metric-label'>Savings Rate</div>", unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown(f"""
+            <div class='metric-card'>
+                <div class='metric-value'>{savings_rate:.1f}%</div>
+                <div class='metric-label'>Savings Rate</div>
+            </div>
+        """, unsafe_allow_html=True)
     
     # Charts Section
     st.markdown("<h3>Financial Charts</h3>", unsafe_allow_html=True)
@@ -289,14 +305,12 @@ def show_dashboard_view(components):
     with tab1:
         # Budget breakdown chart
         budget_chart = visualizer.create_budget_chart(user_data)
-        st.plotly_chart(budget_chart, use_container_width=True)
+        st.plotly_chart(budget_chart, use_container_width=True, key="dashboard_tab1_budget_chart")
     
     with tab2:
-        # Generate demo data for net worth trend
-        # In a real app, this would come from historical data
         demo_monthly_data = visualizer.generate_demo_monthly_data(12)
         income_expense_chart = visualizer.create_income_expense_trend_chart(demo_monthly_data)
-        st.plotly_chart(income_expense_chart, use_container_width=True)
+        st.plotly_chart(income_expense_chart, use_container_width=True, key="dashboard_tab1_income_expense_chart")
     
     with tab3:
         # Asset allocation chart
@@ -315,7 +329,7 @@ def show_dashboard_view(components):
             }
         
         allocation_chart = visualizer.create_investment_allocation_chart(portfolio)
-        st.plotly_chart(allocation_chart, use_container_width=True)
+        st.plotly_chart(allocation_chart, use_container_width=True,key="dashboard_tab3_allocation_chart")
     
     # AI Insights Section
     st.markdown("<h3>AI Financial Insights</h3>", unsafe_allow_html=True)
@@ -332,17 +346,59 @@ def show_dashboard_view(components):
     # Display insights if available
     if "dashboard_insights" in st.session_state.agent_outputs:
         insights = st.session_state.agent_outputs["dashboard_insights"]
-        
-        st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-        st.markdown(f"### Key Financial Insights\n\n{insights['consensus']}")
-        st.markdown("</div>", unsafe_allow_html=True)
-        
-        # Option to see individual agent perspectives
+
+        # --- CONSENSUS INSIGHTS ---
+        # Extract and clean the consensus text
+        raw_text = insights['consensus'].text if hasattr(insights['consensus'], 'text') else str(insights['consensus'])
+
+        # Remove TextBlock(...) wrapper if present
+        match = re.search(r'text\s*=\s*["\'](.+?)["\']', raw_text, re.DOTALL)
+        clean_text = match.group(1) if match else raw_text
+
+        # Final formatting
+        formatted_consensus = clean_text.encode().decode('unicode_escape')
+
+    
+
+        st.markdown(
+            f"""
+            <div style="
+                padding: 1rem;
+                border-left: 4px solid #3366CC;
+                border-radius: 6px;
+                margin-bottom: 2rem;
+                color: inherit;
+                background-color: rgba(51, 102, 204, 0.05);
+            ">
+                <h4 style="margin-top: 0; color: inherit;">Key Financial Insights</h4>
+                <p style="color: inherit;">{formatted_consensus}</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        # --- AGENT RESPONSES ---
         with st.expander("See perspectives from specialized financial agents"):
-            for agent_type, response in insights["agent_responses"].items():
-                st.markdown(f"#### {agent_type.capitalize()} Agent")
-                st.markdown(response)
-                st.markdown("---")
+            for agent_type, response in insights.get("agent_responses", {}).items():
+                formatted_agent_text = format_llm_text(response)
+
+                st.markdown(
+                    f"""
+                    <div style="
+                        padding: 1rem;
+                        border-left: 4px solid #4A90E2;
+                        border-radius: 6px;
+                        margin-bottom: 1.5rem;
+                        background-color: #f1f7ff;
+                        color: #111;
+                    ">
+                        <h5 style="margin-top: 0; color: #3366CC;">{agent_type.capitalize()} Agent</h5>
+                        <p>{formatted_agent_text}</p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
 
 def show_profile_view(components):
     """Show the financial profile view for data entry."""
@@ -738,11 +794,11 @@ def show_budget_view(components):
         
         with col1:
             budget_chart = visualizer.create_budget_chart(user_data)
-            st.plotly_chart(budget_chart, use_container_width=True)
+            st.plotly_chart(budget_chart, use_container_width=True, key="col1_budget_chart")
         
         with col2:
             expense_pie = visualizer.create_expense_pie_chart(user_data["expenses"])
-            st.plotly_chart(expense_pie, use_container_width=True)
+            st.plotly_chart(expense_pie, use_container_width=True, key="col2_expense_pie")
         
         # Budget AI Analysis
         st.markdown("### Budget Analysis")
@@ -758,12 +814,23 @@ def show_budget_view(components):
         
         # Display analysis if available
         if "budget_analysis" in st.session_state.agent_outputs:
-            analysis = st.session_state.agent_outputs["budget_analysis"]
-            
-            st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-            st.markdown(f"### Budget Analysis\n\n{analysis['analysis']}")
-            st.markdown("</div>", unsafe_allow_html=True)
-    
+            raw_text = st.session_state.agent_outputs["budget_analysis"].get("analysis", "")
+            formatted_text = format_llm_text(raw_text)
+
+            st.markdown("""
+                <div style='
+                    background-color: #f1f7ff;
+                    padding: 1rem;
+                    border-left: 4px solid #3366CC;
+                    border-radius: 0.5rem;
+                    color: #111;
+                    margin-top: 1rem;
+                '>
+                    <h4>Budget Analysis</h4>
+                    <p>{}</p>
+                </div>
+            """.format(formatted_text), unsafe_allow_html=True)
+
     with tabs[1]:
         # Income Analysis
         st.markdown("### Income Sources")
@@ -805,7 +872,7 @@ def show_budget_view(components):
             template="plotly_white"
         )
         
-        st.plotly_chart(income_trend, use_container_width=True)
+        st.plotly_chart(income_trend, use_container_width=True, key="income_history_income_trend")
     
     with tabs[2]:
         # Expense Analysis
@@ -830,7 +897,7 @@ def show_budget_view(components):
         # Expense pie chart
         st.markdown("### Expense Distribution")
         expense_pie = visualizer.create_expense_pie_chart(user_data["expenses"])
-        st.plotly_chart(expense_pie, use_container_width=True)
+        st.plotly_chart(expense_pie, use_container_width=True, key="expense_categories_pie")
         
         # Spending Optimization
         st.markdown("### Spending Optimization")
@@ -843,14 +910,42 @@ def show_budget_view(components):
                 
                 # Store in session state
                 st.session_state.agent_outputs["savings_opportunities"] = savings_opps
-        
+
         # Display savings opportunities if available
         if "savings_opportunities" in st.session_state.agent_outputs:
             opps = st.session_state.agent_outputs["savings_opportunities"]
-            
-            st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-            st.markdown(f"### Savings Opportunities\n\n{opps[0]['opportunities']}")
-            st.markdown("</div>", unsafe_allow_html=True)
+
+            # Handle potential formatting issues with \n or object text
+            if isinstance(opps, list):
+                # Handle list of dicts with 'opportunities' key
+                first = opps[0]
+                if isinstance(first, dict) and "opportunities" in first:
+                    raw_text = str(first["opportunities"])
+                else:
+                    raw_text = " ".join(map(str, opps))
+            else:
+                raw_text = str(opps)
+            formatted_text = format_llm_text(raw_text)
+
+            # Styled savings div
+            st.markdown(
+                f"""
+                <div style="
+                    padding: 1rem;
+                    border-left: 4px solid #109618;
+                    border-radius: 6px;
+                    margin-top: 1.5rem;
+                    margin-bottom: 1.5rem;
+                    color: inherit;
+                    background-color: rgba(16, 150, 24, 0.05);
+                ">
+                    <h4 style="margin-top: 0; color: inherit;">Savings Opportunities</h4>
+                    <p style="color: inherit;">{formatted_text}</p>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
     
     with tabs[3]:
         # Budget Planning
@@ -880,9 +975,32 @@ def show_budget_view(components):
         if "budget_plan" in st.session_state.agent_outputs:
             plan = st.session_state.agent_outputs["budget_plan"]
             
-            st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-            st.markdown(f"### Personalized Budget Plan\n\n{plan['budget_plan']}")
-            st.markdown("</div>", unsafe_allow_html=True)
+            # Safely extract and format the text
+            raw_text = plan.get("budget_plan", "")
+            if hasattr(raw_text, "text"):
+                raw_text = raw_text.text
+            elif isinstance(raw_text, list):
+                raw_text = " ".join(map(str, raw_text))
+            else:
+                raw_text = str(raw_text)
+            formatted_text = format_llm_text(raw_text)
+
+            # Render the formatted plan
+            st.markdown("""
+                <div style='
+                    background-color: #f1f7ff;
+                    padding: 1rem;
+                    border-left: 4px solid #3366CC;
+                    border-radius: 0.5rem;
+                    color: #111;
+                    margin-top: 1rem;
+                '>
+                    <h4>Personalized Budget Plan</h4>
+                    <p>{}</p>
+                </div>
+            """.format(formatted_text), unsafe_allow_html=True)
+
+
         
         # Budget templates
         st.markdown("#### Budget Templates")
@@ -908,9 +1026,33 @@ def show_budget_view(components):
             template = st.session_state.agent_outputs["budget_template"]
             
             if template["name"] == selected_template:
-                st.markdown("<div class='card'>", unsafe_allow_html=True)
-                st.markdown(f"### {template['name']}\n\n{template['details']}")
-                st.markdown("</div>", unsafe_allow_html=True)
+                # Normalize and clean up template details
+                raw_details = template["details"]
+                if hasattr(raw_details, "text"):
+                    raw_details = raw_details.text
+                elif isinstance(raw_details, list):
+                    raw_details = " ".join(map(str, raw_details))
+                else:
+                    raw_details = str(raw_details)
+
+                formatted_details = raw_details
+
+                # Display inside styled div
+                st.markdown("""
+                    <div style='
+                        background-color: #f1f7ff;
+                        padding: 1rem;
+                        border-left: 4px solid #3366CC;
+                        border-radius: 0.5rem;
+                        color: #111;
+                        margin-top: 1rem;
+                    '>
+                        <h4>{}</h4>
+                        <p>{}</p>
+                    </div>
+                """.format(template['name'], formatted_details), unsafe_allow_html=True)
+
+
 
 def show_investments_view(components):
     """Show the investment planner view."""
@@ -955,75 +1097,75 @@ def show_investments_view(components):
         with col4:
             st.metric("Total Investments", f"${total_investments:,.2f}")
         
-        # Portfolio file upload
-        st.markdown("### Upload Portfolio Data")
+        # # Portfolio file upload
+        # st.markdown("### Upload Portfolio Data")
         
-        uploaded_file = st.file_uploader("Upload investment portfolio CSV", type=["csv"])
+        # uploaded_file = st.file_uploader("Upload investment portfolio CSV", type=["csv"])
         
-        if uploaded_file is not None:
-            try:
-                # Save file temporarily
-                with open("temp_portfolio.csv", "wb") as f:
-                    f.write(uploaded_file.getvalue())
+        # if uploaded_file is not None:
+        #     try:
+        #         # Save file temporarily
+        #         with open("temp_portfolio.csv", "wb") as f:
+        #             f.write(uploaded_file.getvalue())
                 
-                # Process file
-                portfolio = data_loader.import_investment_portfolio("temp_portfolio.csv")
+        #         # Process file
+        #         portfolio = data_loader.import_investment_portfolio("temp_portfolio.csv")
                 
-                # Save to session state
-                st.session_state.portfolio_data = portfolio
+        #         # Save to session state
+        #         st.session_state.portfolio_data = portfolio
                 
-                st.success(f"Successfully loaded portfolio with {len(portfolio['holdings'])} holdings!")
+        #         st.success(f"Successfully loaded portfolio with {len(portfolio['holdings'])} holdings!")
                 
-                # Clean up
-                if os.path.exists("temp_portfolio.csv"):
-                    os.remove("temp_portfolio.csv")
-            except Exception as e:
-                st.error(f"Error processing portfolio: {e}")
+        #         # Clean up
+        #         if os.path.exists("temp_portfolio.csv"):
+        #             os.remove("temp_portfolio.csv")
+        #     except Exception as e:
+        #         st.error(f"Error processing portfolio: {e}")
         
-        # Display portfolio if available
-        if st.session_state.portfolio_data.get("holdings"):
-            portfolio = st.session_state.portfolio_data
+        # # Display portfolio if available
+        # if st.session_state.portfolio_data.get("holdings"):
+        #     portfolio = st.session_state.portfolio_data
             
-            st.markdown("### Current Portfolio")
+        #     st.markdown("### Current Portfolio")
             
-            # Create DataFrame for display
-            holdings_df = pd.DataFrame(portfolio["holdings"])
+        #     # Create DataFrame for display
+        #     holdings_df = pd.DataFrame(portfolio["holdings"])
             
-            # Calculate additional metrics
-            if "weight" not in holdings_df.columns:
-                holdings_df["weight"] = holdings_df["value"] / holdings_df["value"].sum() * 100
+        #     # Calculate additional metrics
+        #     if "weight" not in holdings_df.columns:
+        #         holdings_df["weight"] = holdings_df["value"] / holdings_df["value"].sum() * 100
             
-            # Format for display
-            display_df = holdings_df.copy()
-            if "price" in display_df.columns:
-                display_df["price"] = display_df["price"].apply(lambda x: f"${x:,.2f}")
-            if "value" in display_df.columns:
-                display_df["value"] = display_df["value"].apply(lambda x: f"${x:,.2f}")
-            if "weight" in display_df.columns:
-                display_df["weight"] = display_df["weight"].apply(lambda x: f"{x:.2f}%")
+        #     # Format for display
+        #     display_df = holdings_df.copy()
+        #     if "price" in display_df.columns:
+        #         display_df["price"] = display_df["price"].apply(lambda x: f"${x:,.2f}")
+        #     if "value" in display_df.columns:
+        #         display_df["value"] = display_df["value"].apply(lambda x: f"${x:,.2f}")
+        #     if "weight" in display_df.columns:
+        #         display_df["weight"] = display_df["weight"].apply(lambda x: f"{x:.2f}%")
             
-            # Display holdings table
-            st.dataframe(display_df, use_container_width=True)
+        #     # Display holdings table
+        #     st.dataframe(display_df, use_container_width=True)
             
-            # Portfolio analysis button
-            if st.button("Analyze Portfolio"):
-                with st.spinner("Analyzing your investment portfolio..."):
-                    # Get analysis from investment agent
-                    investment_agent = agent_manager.get_agent("investment")
-                    portfolio_analysis = investment_agent.analyze_portfolio(portfolio)
+        #     # Portfolio analysis button
+        #     if st.button("Analyze Portfolio"):
+        #         with st.spinner("Analyzing your investment portfolio..."):
+        #             # Get analysis from investment agent
+        #             investment_agent = agent_manager.get_agent("investment")
+        #             portfolio_analysis = investment_agent.analyze_portfolio(portfolio)
                     
-                    # Store in session state
-                    st.session_state.agent_outputs["portfolio_analysis"] = portfolio_analysis
+        #             # Store in session state
+        #             st.session_state.agent_outputs["portfolio_analysis"] = portfolio_analysis
             
-            # Display analysis if available
-            if "portfolio_analysis" in st.session_state.agent_outputs:
-                analysis = st.session_state.agent_outputs["portfolio_analysis"]
+        #     # Display analysis if available
+        #     if "portfolio_analysis" in st.session_state.agent_outputs:
+        #         analysis = st.session_state.agent_outputs["portfolio_analysis"]
                 
-                st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-                st.markdown(f"### Portfolio Analysis\n\n{analysis['analysis']}")
-                st.markdown("</div>", unsafe_allow_html=True)
-        else:
-            st.info("Upload a portfolio CSV or enter your investments in the Financial Profile section to see a detailed analysis.")
+        #         st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
+        #         st.markdown(f"### Portfolio Analysis\n\n{analysis['analysis']}")
+        #         st.markdown("</div>", unsafe_allow_html=True)
+        # else:
+        #     st.info("Upload a portfolio CSV or enter your investments in the Financial Profile section to see a detailed analysis.")
     
     with tabs[1]:
         # Asset Allocation
@@ -1065,7 +1207,7 @@ def show_investments_view(components):
             # Create pie chart
             portfolio_for_chart = {"asset_allocation": allocation_data}
             allocation_chart = visualizer.create_investment_allocation_chart(portfolio_for_chart)
-            st.plotly_chart(allocation_chart, use_container_width=True)
+            st.plotly_chart(allocation_chart, use_container_width=True, key="asset_allocation_chart")
             
             # Display allocation table
             allocation_df = pd.DataFrame([
@@ -1110,10 +1252,32 @@ def show_investments_view(components):
         # Display recommendation if available
         if "allocation_recommendation" in st.session_state.agent_outputs:
             recommendation = st.session_state.agent_outputs["allocation_recommendation"]
-            
-            st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-            st.markdown(f"### Recommended Asset Allocation\n\n{recommendation[0]['recommendations']}")
-            st.markdown("</div>", unsafe_allow_html=True)
+
+            # Extract and clean the text
+            raw_text = recommendation[0].get("recommendations", "")
+            if hasattr(raw_text, "text"):
+                raw_text = raw_text.text
+            elif isinstance(raw_text, list):
+                raw_text = " ".join(map(str, raw_text))
+            else:
+                raw_text = str(raw_text)
+            formatted_text = format_llm_text(raw_text)
+
+            # Render inside styled container
+            st.markdown("""
+                <div style='
+                    background-color: #f1f7ff;
+                    padding: 1rem;
+                    border-left: 4px solid #3366CC;
+                    border-radius: 0.5rem;
+                    color: #111;
+                    margin-top: 1rem;
+                '>
+                    <h4>Recommended Asset Allocation</h4>
+                    <p>{}</p>
+                </div>
+            """.format(formatted_text), unsafe_allow_html=True)
+
     
     with tabs[2]:
         # Retirement Planning
@@ -1183,7 +1347,7 @@ def show_investments_view(components):
             
             # Create projection chart
             projection_chart = visualizer.create_retirement_projection_chart(projection)
-            st.plotly_chart(projection_chart, use_container_width=True)
+            st.plotly_chart(projection_chart, use_container_width=True, key="retirement_projection_chart")
             
             # Final values
             final_baseline = projection["baseline"][-1]
@@ -1202,12 +1366,33 @@ def show_investments_view(components):
                 st.metric("Optimistic Estimate", f"${final_optimistic:,.2f}")
             
             # Display retirement advice if available
-            if "retirement_advice" in st.session_state.agent_outputs:
-                advice = st.session_state.agent_outputs["retirement_advice"]
-                
-                st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-                st.markdown(f"### Retirement Planning Advice\n\n{advice}")
-                st.markdown("</div>", unsafe_allow_html=True)
+        if "retirement_advice" in st.session_state.agent_outputs:
+            advice = st.session_state.agent_outputs["retirement_advice"]
+
+            # Normalize text
+            if hasattr(advice, "text"):
+                raw_text = advice.text
+            elif isinstance(advice, list):
+                raw_text = " ".join(map(str, advice))
+            else:
+                raw_text = str(advice)
+            formatted_text = format_llm_text(raw_text)
+
+            # Render with consistent styling
+            st.markdown("""
+                <div style='
+                    background-color: #f1f7ff;
+                    padding: 1rem;
+                    border-left: 4px solid #3366CC;
+                    border-radius: 0.5rem;
+                    color: #111;
+                    margin-top: 1rem;
+                '>
+                    <h4>Retirement Planning Advice</h4>
+                    <p>{}</p>
+                </div>
+            """.format(formatted_text), unsafe_allow_html=True)
+
     
     with tabs[3]:
         # Investment Recommendations
@@ -1271,10 +1456,32 @@ def show_investments_view(components):
         # Display recommendations if available
         if "investment_recommendations" in st.session_state.agent_outputs:
             recommendations = st.session_state.agent_outputs["investment_recommendations"]
-            
-            st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-            st.markdown(f"### Investment Recommendations\n\n{recommendations[0]['recommendations']}")
-            st.markdown("</div>", unsafe_allow_html=True)
+
+            # Normalize and clean text
+            raw_text = recommendations[0].get("recommendations", "")
+            if hasattr(raw_text, "text"):
+                raw_text = raw_text.text
+            elif isinstance(raw_text, list):
+                raw_text = " ".join(map(str, raw_text))
+            else:
+                raw_text = str(raw_text)
+            formatted_text = format_llm_text(raw_text)
+
+            # Styled display
+            st.markdown("""
+                <div style='
+                    background-color: #f1f7ff;
+                    padding: 1rem;
+                    border-left: 4px solid #3366CC;
+                    border-radius: 0.5rem;
+                    color: #111;
+                    margin-top: 1rem;
+                '>
+                    <h4>Investment Recommendations</h4>
+                    <p>{}</p>
+                </div>
+            """.format(formatted_text), unsafe_allow_html=True)
+
         
         # Investment concept explanations
         st.markdown("### Investment Concepts")
@@ -1309,12 +1516,35 @@ def show_investments_view(components):
         # Display explanation if available
         if "concept_explanation" in st.session_state.agent_outputs:
             explanation_data = st.session_state.agent_outputs["concept_explanation"]
-            
+
             # Only show if it matches the current selection
             if explanation_data["concept"] == selected_concept and explanation_data["level"] == selected_level:
-                st.markdown("<div class='card'>", unsafe_allow_html=True)
-                st.markdown(f"### {explanation_data['concept']} ({explanation_data['level']})\n\n{explanation_data['explanation']}")
-                st.markdown("</div>", unsafe_allow_html=True)
+                raw_text = explanation_data.get("explanation", "")
+                if hasattr(raw_text, "text"):
+                    raw_text = raw_text.text
+                elif isinstance(raw_text, list):
+                    raw_text = " ".join(map(str, raw_text))
+                else:
+                    raw_text = str(raw_text)
+                formatted_text = format_llm_text(raw_text)
+
+                st.markdown("""
+                    <div style='
+                        background-color: #f1f7ff;
+                        padding: 1rem;
+                        border-left: 4px solid #3366CC;
+                        border-radius: 0.5rem;
+                        color: #111;
+                        margin-top: 1rem;
+                    '>
+                        <h4>{}</h4>
+                        <p>{}</p>
+                    </div>
+                """.format(
+                    f"{explanation_data['concept']} ({explanation_data['level']})",
+                    formatted_text
+                ), unsafe_allow_html=True)
+
 
 def show_debt_view(components):
     """Show the debt manager view."""
@@ -1451,10 +1681,30 @@ def show_debt_view(components):
             # Display analysis if available
             if "debt_analysis" in st.session_state.agent_outputs:
                 analysis = st.session_state.agent_outputs["debt_analysis"]
-                
-                st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-                st.markdown(f"### Debt Profile Analysis\n\n{analysis['analysis']}")
-                st.markdown("</div>", unsafe_allow_html=True)
+                raw_text = analysis.get("analysis", "")
+
+                if hasattr(raw_text, "text"):
+                    raw_text = raw_text.text
+                elif isinstance(raw_text, list):
+                    raw_text = " ".join(map(str, raw_text))
+                else:
+                    raw_text = str(raw_text)
+                formatted_text = format_llm_text(raw_text)
+
+                st.markdown("""
+                    <div style='
+                        background-color: #f1f7ff;
+                        padding: 1rem;
+                        border-left: 4px solid #3366CC;
+                        border-radius: 0.5rem;
+                        color: #111;
+                        margin-top: 1rem;
+                    '>
+                        <h4>Debt Profile Analysis</h4>
+                        <p>{}</p>
+                    </div>
+                """.format(formatted_text), unsafe_allow_html=True)
+
         else:
             st.info("No debt information available. Please enter your debts in the Financial Profile section.")
     
@@ -1501,18 +1751,39 @@ def show_debt_view(components):
         # Display repayment plan if available
         if "repayment_plan" in st.session_state.agent_outputs:
             plan = st.session_state.agent_outputs["repayment_plan"]
-            
-            st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-            st.markdown(f"### {plan['strategy'].capitalize()} Repayment Plan\n\n{plan['repayment_plan']}")
-            st.markdown("</div>", unsafe_allow_html=True)
-            
+
+            # Normalize the repayment plan text
+            raw_text = plan.get("repayment_plan", "")
+            if hasattr(raw_text, "text"):
+                raw_text = raw_text.text
+            elif isinstance(raw_text, list):
+                raw_text = " ".join(map(str, raw_text))
+            else:
+                raw_text = str(raw_text)
+            formatted_text = format_llm_text(raw_text)
+
+            st.markdown(f"""
+                <div style='
+                    background-color: #f1f7ff;
+                    padding: 1rem;
+                    border-left: 4px solid #3366CC;
+                    border-radius: 0.5rem;
+                    color: #111;
+                    margin-top: 1rem;
+                '>
+                    <h4>{plan['strategy'].capitalize()} Repayment Plan</h4>
+                    <p>{formatted_text}</p>
+                </div>
+            """, unsafe_allow_html=True)
+
             # Display projection chart if available
             if "debt_projections" in st.session_state.agent_outputs:
                 projections = st.session_state.agent_outputs["debt_projections"]
                 
                 st.markdown("### Debt Payoff Projection")
                 projection_chart = visualizer.create_debt_payoff_chart(projections)
-                st.plotly_chart(projection_chart, use_container_width=True)
+                st.plotly_chart(projection_chart, use_container_width=True, key="debt_payoff_projection_chart")
+
     
     with tabs[2]:
         # Loan Comparison
@@ -1640,11 +1911,31 @@ def show_debt_view(components):
             # Display loan evaluation if available
             if "loan_evaluation" in st.session_state.agent_outputs:
                 evaluation = st.session_state.agent_outputs["loan_evaluation"]
-                
-                st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-                st.markdown(f"### Loan Evaluation\n\n{evaluation['evaluation']}")
-                st.markdown("</div>", unsafe_allow_html=True)
-    
+
+                # Normalize the evaluation text
+                raw_text = evaluation.get("evaluation", "")
+                if hasattr(raw_text, "text"):
+                    raw_text = raw_text.text
+                elif isinstance(raw_text, list):
+                    raw_text = " ".join(map(str, raw_text))
+                else:
+                    raw_text = str(raw_text)
+                formatted_text = format_llm_text(raw_text)
+
+                st.markdown(f"""
+                    <div style='
+                        background-color: #f1f7ff;
+                        padding: 1rem;
+                        border-left: 4px solid #3366CC;
+                        border-radius: 0.5rem;
+                        color: #111;
+                        margin-top: 1rem;
+                    '>
+                        <h4>Loan Evaluation</h4>
+                        <p>{formatted_text}</p>
+                    </div>
+                """, unsafe_allow_html=True)
+
     with tabs[3]:
         # Credit Score
         st.markdown("### Credit Score Management")
@@ -1675,7 +1966,7 @@ def show_debt_view(components):
         ))
         
         fig.update_layout(height=300)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="credit_score_fig")
         
         # Credit score rating
         rating = "Poor"
@@ -1698,7 +1989,7 @@ def show_debt_view(components):
         
         # Create chart
         credit_chart = visualizer.create_credit_score_chart(credit_history)
-        st.plotly_chart(credit_chart, use_container_width=True)
+        st.plotly_chart(credit_chart, use_container_width=True, key="credit_history_chart")
         
         # Credit score improvement
         st.markdown("### Credit Score Improvement")
@@ -1735,10 +2026,31 @@ def show_debt_view(components):
         # Display credit analysis if available
         if "credit_analysis" in st.session_state.agent_outputs:
             analysis = st.session_state.agent_outputs["credit_analysis"]
-            
-            st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-            st.markdown(f"### Credit Score Improvement Recommendations\n\n{analysis['analysis']}")
-            st.markdown("</div>", unsafe_allow_html=True)
+
+            # Normalize the content
+            raw_text = analysis.get("analysis", "")
+            if hasattr(raw_text, "text"):
+                raw_text = raw_text.text
+            elif isinstance(raw_text, list):
+                raw_text = " ".join(map(str, raw_text))
+            else:
+                raw_text = str(raw_text)
+            formatted_text = format_llm_text(raw_text)
+
+            st.markdown(f"""
+                <div style='
+                    background-color: #f1f7ff;
+                    padding: 1rem;
+                    border-left: 4px solid #3366CC;
+                    border-radius: 0.5rem;
+                    color: #111;
+                    margin-top: 1rem;
+                '>
+                    <h4>Credit Score Improvement Recommendations</h4>
+                    <p>{formatted_text}</p>
+                </div>
+            """, unsafe_allow_html=True)
+
 
 def show_savings_view(components):
     """Show the savings goals view."""
@@ -1765,7 +2077,7 @@ def show_savings_view(components):
         if savings_goals:
             # Create progress chart
             goals_chart = visualizer.create_savings_goal_progress_chart(savings_goals)
-            st.plotly_chart(goals_chart, use_container_width=True)
+            st.plotly_chart(goals_chart, use_container_width=True, key="goals_chart")
             
             # Display goals in table
             goals_df = pd.DataFrame(savings_goals)
@@ -1803,10 +2115,30 @@ def show_savings_view(components):
             # Display prioritization if available
             if "goal_prioritization" in st.session_state.agent_outputs:
                 prioritization = st.session_state.agent_outputs["goal_prioritization"]
-                
-                st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-                st.markdown(f"### Goal Prioritization Recommendation\n\n{prioritization['prioritized_plan']}")
-                st.markdown("</div>", unsafe_allow_html=True)
+
+                raw_text = prioritization.get("prioritized_plan", "")
+                if hasattr(raw_text, "text"):
+                    raw_text = raw_text.text
+                elif isinstance(raw_text, list):
+                    raw_text = " ".join(map(str, raw_text))
+                else:
+                    raw_text = str(raw_text)
+                formatted_text = format_llm_text(raw_text)
+
+                st.markdown(f"""
+                    <div style='
+                        background-color: #f1f7ff;
+                        padding: 1rem;
+                        border-left: 4px solid #3366CC;
+                        border-radius: 0.5rem;
+                        color: #111;
+                        margin-top: 1rem;
+                    '>
+                        <h4>Goal Prioritization Recommendation</h4>
+                        <p>{formatted_text}</p>
+                    </div>
+                """, unsafe_allow_html=True)
+
         else:
             st.info("No savings goals found. Add goals in the Financial Profile section or create a new goal below.")
         
@@ -1884,10 +2216,30 @@ def show_savings_view(components):
         # Display optimization if available
         if "ef_optimization" in st.session_state.agent_outputs:
             optimization = st.session_state.agent_outputs["ef_optimization"]
-            
-            st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-            st.markdown(f"### Emergency Fund Recommendations\n\n{optimization['recommendations']}")
-            st.markdown("</div>", unsafe_allow_html=True)
+
+            raw_text = optimization.get("recommendations", "")
+            if hasattr(raw_text, "text"):
+                raw_text = raw_text.text
+            elif isinstance(raw_text, list):
+                raw_text = " ".join(map(str, raw_text))
+            else:
+                raw_text = str(raw_text)
+            formatted_text = format_llm_text(raw_text)
+
+            st.markdown(f"""
+                <div style='
+                    background-color: #f1f7ff;
+                    padding: 1rem;
+                    border-left: 4px solid #3366CC;
+                    border-radius: 0.5rem;
+                    color: #111;
+                    margin-top: 1rem;
+                '>
+                    <h4>Emergency Fund Recommendations</h4>
+                    <p>{formatted_text}</p>
+                </div>
+            """, unsafe_allow_html=True)
+
     
     with tabs[2]:
         # Goal Planning
@@ -1941,10 +2293,23 @@ def show_savings_view(components):
         # Display savings plan if available
         if "savings_plan" in st.session_state.agent_outputs:
             plan = st.session_state.agent_outputs["savings_plan"]
-            
-            st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-            st.markdown(f"### Savings Plan for {plan['goal'].get('name', 'Your Goal')}\n\n{plan['savings_plan']}")
-            st.markdown("</div>", unsafe_allow_html=True)
+
+            # Normalize and format text
+            raw_text = plan.get("savings_plan", "")
+            if hasattr(raw_text, "text"):
+                raw_text = raw_text.text
+            elif isinstance(raw_text, list):
+                raw_text = " ".join(map(str, raw_text))
+            formatted_text = format_llm_text(raw_text)
+
+            # Styled div
+            st.markdown("""
+                <div style='background-color:#e8f4fd; padding: 15px; border-radius: 8px; border-left: 4px solid #3366CC; color: #222222;'>
+                    <h4 style='margin-top: 0;'>Savings Plan for {goal_name}</h4>
+                    <p>{content}</p>
+                </div>
+            """.format(goal_name=plan['goal'].get('name', 'Your Goal'), content=formatted_text), unsafe_allow_html=True)
+
         
         # Simple savings calculator
         st.markdown("### Savings Calculator")
@@ -1990,10 +2355,23 @@ def show_savings_view(components):
         # Display savings potential if available
         if "savings_potential" in st.session_state.agent_outputs:
             potential = st.session_state.agent_outputs["savings_potential"]
-            
-            st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-            st.markdown(f"### Savings Potential Analysis\n\n{potential['analysis']}")
-            st.markdown("</div>", unsafe_allow_html=True)
+
+            # Normalize and format text
+            raw_text = potential.get("analysis", "")
+            if hasattr(raw_text, "text"):
+                raw_text = raw_text.text
+            elif isinstance(raw_text, list):
+                raw_text = " ".join(map(str, raw_text))
+            formatted_text = format_llm_text(raw_text)
+
+            # Styled div output
+            st.markdown(f"""
+                <div style='background-color:#e8f4fd; padding: 15px; border-radius: 8px; border-left: 4px solid #3366CC; color: #222222;'>
+                    <h4 style='margin-top: 0;'>Savings Potential Analysis</h4>
+                    <p>{formatted_text}</p>
+                </div>
+            """, unsafe_allow_html=True)
+
             
             # Display current savings metrics
             col1, col2, col3 = st.columns(3)
@@ -2029,37 +2407,50 @@ def show_savings_view(components):
                 }
         
         # Display strategies if available
-        if "savings_strategies" in st.session_state.agent_outputs:
-            strategy_data = st.session_state.agent_outputs["savings_strategies"]
-            
-            # Only show if it matches the current goal
-            if strategy_data["goal"] == selected_goal:
-                st.markdown(f"### Strategies for {strategy_data['goal']}")
-                
-                # Show each strategy in an expander
-                for i, strategy in enumerate(strategy_data["strategies"]):
-                    with st.expander(f"Strategy {i+1}: {strategy.get('name', f'Option {i+1}')}"):
-                        st.markdown(strategy.get("content", ""))
-                        
-                        # Add option to save strategy as a goal
-                        if st.button(f"Create Goal from Strategy {i+1}", key=f"create_goal_{i}"):
-                            # Extract a simple name from the strategy
-                            goal_name = f"{selected_goal} - Strategy {i+1}"
-                            
-                            # Add to user's goals
-                            if "savings_goals" not in user_data["savings"]:
-                                user_data["savings"]["savings_goals"] = []
-                            
-                            # Default values - in a real app, would parse from strategy
-                            user_data["savings"]["savings_goals"].append({
-                                "name": goal_name,
-                                "target": 10000.0,  # Default value
-                                "current": 0.0,
-                                "deadline": (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d")
-                            })
-                            
-                            st.success(f"Added new goal: {goal_name}")
-                            st.rerun()
+
+    if "savings_strategies" in st.session_state.agent_outputs:
+        strategy_data = st.session_state.agent_outputs["savings_strategies"]
+
+        # Only show if it matches the current goal
+        if strategy_data["goal"] == selected_goal:
+            st.markdown(f"### Strategies for {strategy_data['goal']}")
+
+            # Show each strategy in an expander
+            for i, strategy in enumerate(strategy_data["strategies"]):
+                with st.expander(f"Strategy {i+1}: {strategy.get('name', f'Option {i+1}')}"):
+
+                    # Format strategy content
+                    raw_content = strategy.get("content", "")
+                    if hasattr(raw_content, "text"):
+                        raw_content = raw_content.text
+                    elif isinstance(raw_content, list):
+                        raw_content = " ".join(map(str, raw_content))
+                    formatted_content = str(raw_content)
+
+                    # Display inside styled div
+                    st.markdown(f"""
+                        <div style='background-color:#e8f4fd; padding: 15px; border-radius: 8px; border-left: 4px solid #3366CC; color: #222222;'>
+                            <p>{formatted_content}</p>
+                        </div>
+                        <br/>
+                    """, unsafe_allow_html=True)
+
+                    # Add option to save strategy as a goal
+                    if st.button(f"Create Goal from Strategy {i+1}", key=f"create_goal_{i}"):
+                        goal_name = f"{selected_goal} - Strategy {i+1}"
+
+                        if "savings_goals" not in user_data["savings"]:
+                            user_data["savings"]["savings_goals"] = []
+
+                        user_data["savings"]["savings_goals"].append({
+                            "name": goal_name,
+                            "target": 10000.0,
+                            "current": 0.0,
+                            "deadline": (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d")
+                        })
+
+                        st.success(f"Added new goal: {goal_name}")
+                        st.rerun()
 
 def show_tax_view(components):
     """Show the tax optimizer view."""
@@ -2113,10 +2504,28 @@ def show_tax_view(components):
         # Display tax analysis if available
         if "tax_analysis" in st.session_state.agent_outputs:
             analysis = st.session_state.agent_outputs["tax_analysis"]
-            
-            st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-            st.markdown(f"### Tax Situation Analysis\n\n{analysis['analysis']}")
-            st.markdown("</div>", unsafe_allow_html=True)
+
+            # Normalize and extract clean text from object, list, or raw string
+            raw_text = analysis.get("analysis", "")
+            if hasattr(raw_text, "text"):  # LangChain-style TextBlock
+                raw_text = raw_text.text
+            elif isinstance(raw_text, list):  # If it’s a list of strings
+                raw_text = " ".join(str(item) for item in raw_text)
+            else:
+                raw_text = str(raw_text)
+
+            # Final formatting
+            formatted_text = raw_text.replace("TextBlock(citations=None, text=", "").rstrip(")\"")
+
+            # Display in styled card
+            st.markdown(f"""
+                <div class='agent-response' style='background-color: #f1f7ff; padding: 1rem; border-left: 4px solid #3366CC; border-radius: 8px; margin-top: 1rem;'>
+                    <h4 style='color:#3366CC; margin-bottom: 0.5rem;'>Tax Situation Analysis</h4>
+                    <p style='color:#333333; line-height: 1.6;'>{formatted_text}</p>
+                </div>
+            """, unsafe_allow_html=True)
+
+
         
         # Tax estimator
         st.markdown("### Tax Liability Estimator")
@@ -2156,10 +2565,25 @@ def show_tax_view(components):
         # Display tax estimate if available
         if "tax_estimate" in st.session_state.agent_outputs:
             estimate = st.session_state.agent_outputs["tax_estimate"]
-            
-            st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-            st.markdown(f"### Tax Liability Estimate\n\n{estimate['tax_estimate']}")
-            st.markdown("</div>", unsafe_allow_html=True)
+
+            # Normalize and format the text
+            raw_text = estimate.get("tax_estimate", "")
+            if hasattr(raw_text, "text"):
+                raw_text = raw_text.text
+            elif isinstance(raw_text, list):
+                raw_text = " ".join(map(str, raw_text))
+            else:
+                raw_text = str(raw_text)
+            formatted_text = format_llm_text(raw_text)
+
+            # Display in styled div
+            st.markdown("""
+                <div class='agent-response'>
+                    <h4 style='color:#3366CC;'>Tax Liability Estimate</h4>
+                    <p style='color:#333333;'>%s</p>
+                </div>
+            """ % formatted_text, unsafe_allow_html=True)
+
     
     with tabs[1]:
         # Tax Planning
@@ -2202,12 +2626,26 @@ def show_tax_view(components):
         # Display tax planning if available
         if "tax_planning" in st.session_state.agent_outputs:
             planning = st.session_state.agent_outputs["tax_planning"]
-            
-            # Only show if it matches the current selection
+
             if planning["area"] == selected_area and planning["year"] == tax_year:
-                st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-                st.markdown(f"### {planning['area']} Strategies for {planning['year']}\n\n{planning['strategies']}")
-                st.markdown("</div>", unsafe_allow_html=True)
+                # Normalize and format the strategies content
+                raw_text = planning.get("strategies", "")
+                if hasattr(raw_text, "text"):
+                    raw_text = raw_text.text
+                elif isinstance(raw_text, list):
+                    raw_text = " ".join(map(str, raw_text))
+                else:
+                    raw_text = str(raw_text)
+                formatted_text = format_llm_text(raw_text)
+
+                # Display inside styled div
+                st.markdown(f"""
+                    <div class='agent-response'>
+                        <h4 style='color:#3366CC;'>{planning['area']} Strategies for {planning['year']}</h4>
+                        <p style='color:#333333;'>{formatted_text}</p>
+                    </div>
+                """, unsafe_allow_html=True)
+
     
     with tabs[2]:
         # Tax-Advantaged Accounts
@@ -2225,11 +2663,25 @@ def show_tax_view(components):
         # Display account recommendations if available
         if "account_recommendations" in st.session_state.agent_outputs:
             recommendations = st.session_state.agent_outputs["account_recommendations"]
-            
-            st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-            st.markdown(f"### Tax-Advantaged Account Recommendations\n\n{recommendations['recommendations']}")
-            st.markdown("</div>", unsafe_allow_html=True)
-        
+
+            # Normalize and format the text
+            raw_text = recommendations.get("recommendations", "")
+            if hasattr(raw_text, "text"):
+                raw_text = raw_text.text
+            elif isinstance(raw_text, list):
+                raw_text = " ".join(map(str, raw_text))
+            else:
+                raw_text = str(raw_text)
+            formatted_text = format_llm_text(raw_text)
+
+            # Display inside styled container
+            st.markdown(f"""
+                <div class='agent-response'>
+                    <h4 style='color:#3366CC;'>Tax-Advantaged Account Recommendations</h4>
+                    <p style='color:#333333;'>{formatted_text}</p>
+                </div>
+            """, unsafe_allow_html=True)
+
         # Account comparison
         st.markdown("### Account Type Comparison")
         
@@ -2262,12 +2714,26 @@ def show_tax_view(components):
         # Display comparison if available
         if "account_comparison" in st.session_state.agent_outputs:
             comparison = st.session_state.agent_outputs["account_comparison"]
-            
+
             # Only show if it matches the current selection
             if comparison["comparison"] == selected_comparison:
-                st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-                st.markdown(f"### Comparison: {comparison['comparison']}\n\n{comparison['explanation']}")
-                st.markdown("</div>", unsafe_allow_html=True)
+                # Normalize and format the explanation text
+                raw_text = comparison.get("explanation", "")
+                if hasattr(raw_text, "text"):
+                    raw_text = raw_text.text
+                elif isinstance(raw_text, list):
+                    raw_text = " ".join(map(str, raw_text))
+                else:
+                    raw_text = str(raw_text)
+                formatted_text = format_llm_text(raw_text)
+
+                st.markdown(f"""
+                    <div class='agent-response'>
+                        <h4 style='color:#3366CC;'>Comparison: {comparison['comparison']}</h4>
+                        <p style='color:#333333;'>{formatted_text}</p>
+                    </div>
+                """, unsafe_allow_html=True)
+
     
     with tabs[3]:
         # Tax Implications
@@ -2308,10 +2774,24 @@ def show_tax_view(components):
         # Display tax implications if available
         if "tax_implications" in st.session_state.agent_outputs:
             implications = st.session_state.agent_outputs["tax_implications"]
-            
-            st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-            st.markdown(f"### Tax Implications Analysis\n\n{implications['tax_analysis']}")
-            st.markdown("</div>", unsafe_allow_html=True)
+
+            # Normalize and format the explanation text
+            raw_text = implications.get("tax_analysis", "")
+            if hasattr(raw_text, "text"):
+                raw_text = raw_text.text
+            elif isinstance(raw_text, list):
+                raw_text = " ".join(map(str, raw_text))
+            else:
+                raw_text = str(raw_text)
+            formatted_text = format_llm_text(raw_text)
+
+            st.markdown(f"""
+                <div class='agent-response'>
+                    <h4 style='color:#3366CC;'>Tax Implications Analysis</h4>
+                    <p style='color:#333333;'>{formatted_text}</p>
+                </div>
+            """, unsafe_allow_html=True)
+
         
         # Tax calendar
         st.markdown("### Tax Calendar")

@@ -427,7 +427,7 @@ class FinancialVisualizer:
                 name="Surplus/Deficit",
                 line=dict(color=self.color_scheme["primary"], width=0),
                 fill="tozeroy",
-                fillcolor=self.color_scheme["primary"] + "50"  # Add transparency
+                fillcolor="rgba(51,102,204,0.3)"
             )
         )
         
