@@ -29,15 +29,15 @@ An intelligent, interactive financial planning app powered by Anthropic Claude a
 
 ## ⚙️ Setup Instructions (Windows)
 
-## 1. Clone the repository
-git clone [https://github.com/your-username/financial-portal.git](https://github.com/iamreubengm/abm_final_project)
+## 1. Clone the repository  
+git clone https://github.com/iamreubengm/abm_final_project  
 cd abm_final_project
 
-## 2. Set up virtual environment
-python -m venv venv
+## 2. Set up virtual environment  
+python -m venv venv  
 .\venv\Scripts\activate
 
-## 3. Install dependencies
+## 3. Install dependencies  
 pip install -r requirements.txt
 
 ## 4. Create .env file and add your Claude API key
