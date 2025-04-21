@@ -10,21 +10,21 @@
     }
   },
   "income": {
-    "salary": 110000.0,
+    "salary": 9000.0,
     "self_employment": 8000.0,
     "investments": 4000.0,
     "other": 1000.0
   },
   "expenses": {
-    "housing": 2200.0,
-    "transportation": 500.0,
+    "housing": 3200.0,
+    "transportation": 750.0,
     "food": 750.0,
     "utilities": 250.0,
     "insurance": 350.0,
     "healthcare": 300.0,
-    "personal": 300.0,
+    "personal": 1000.0,
     "entertainment": 250.0,
-    "other": 150.0
+    "other": 500.0
   },
   "debts": {
     "credit_cards": [
@@ -95,7 +95,7 @@
     "savings_accounts": [
       {
         "name": "Marcus High Yield",
-        "balance": 10000.0,
+        "balance": 65426.0,
         "interest_rate": 1.8,
         "purpose": "Emergency + Travel"
       }
