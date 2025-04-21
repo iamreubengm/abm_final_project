@@ -278,7 +278,7 @@ def show_dashboard_view(components):
         """, unsafe_allow_html=True)
 
     with col2:
-        monthly_income = sum(user_data["income"].values()) / 12
+        monthly_income = sum(user_data["income"].values())
         st.markdown(f"""
             <div class='metric-card'>
                 <div class='metric-value'>${monthly_income:,.2f}</div>
