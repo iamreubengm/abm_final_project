@@ -1,16 +1,59 @@
 # app.py
 import streamlit as st
 import pandas as pd
-import plotly.graph_objs as go
-import os
-import json
-from datetime import datetime
-import time
-from dotenv import load_dotenv
+import plotly.graph_objects as go
 from datetime import datetime, timedelta
-import re
-# Load environment variables
-load_dotenv()
+import json
+import os
+from pathlib import Path
+
+# Import UI components
+from ui.components import (
+    display_header,
+    display_metric_card,
+    display_card,
+    display_agent_response,
+    create_navigation_button,
+    display_quick_stats,
+    display_chat_message,
+    format_expert_message,
+    format_consensus_message,
+    display_agent_comparison,
+    display_styled_agent_response,
+    display_chart,
+    display_dataframe,
+    display_styled_message,
+    create_metric_columns,
+    create_tabs,
+    create_columns,
+    format_currency,
+    format_percentage
+)
+
+# Import utility functions
+from utils.data_processing import (
+    calculate_total_income,
+    calculate_total_expenses,
+    calculate_savings_rate,
+    calculate_portfolio_value,
+    calculate_asset_allocation,
+    format_financial_data,
+    calculate_debt_to_income_ratio
+)
+
+# Import view components
+from ui.views import (
+    render_dashboard_metrics,
+    render_investment_metrics,
+    render_debt_metrics,
+    render_savings_metrics,
+    render_profile_section,
+    render_income_section,
+    render_expenses_section,
+    render_debt_section,
+    render_investment_section,
+    render_savings_section
+)
 
 # Import project modules
 from agents.agent_manager import AgentManager
@@ -19,6 +62,11 @@ from utils.visualization import FinancialVisualizer
 from utils.rag_utils import FinancialRAG
 from utils.llm_utils import LLMUtils
 from config import get_anthropic_client, STREAMLIT_PAGE_TITLE, STREAMLIT_PAGE_ICON, STREAMLIT_LAYOUT
+
+# Import UI modules
+from ui.styles import apply_css
+from ui.navigation import create_sidebar
+from ui.forms import income_input, expense_input, date_input, text_input, selectbox, multiselect
 
 # Initialize components
 @st.cache_resource
@@ -77,35 +125,69 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-def format_llm_text(raw):
+def format_llm_output(raw_output):
     """
-    Takes LLM output and returns clean, HTML-formatted text.
-    Handles TextBlock, list, dict, or plain string.
+    Format LLM output into clean, readable HTML with proper styling.
+    Handles TextBlock, list, dict, or plain string inputs.
     """
+    # Extract text from TextBlock if needed
+    if hasattr(raw_output, "text"):
+        raw_output = raw_output.text
+    elif isinstance(raw_output, list):
+        raw_output = " ".join(map(str, raw_output))
+    elif isinstance(raw_output, dict):
+        # Extract relevant fields from dict
+        for key in ["analysis", "recommendations", "content", "advice", "plan", "evaluation", "opportunities"]:
+            if raw_output.get(key):
+                raw_output = raw_output[key]
+                break
+    
+    # Convert to string if not already
+    text = str(raw_output)
+    
+    # Clean up TextBlock wrapper if present
     import re
-
-    # If it's an object with .text, use that
-    if hasattr(raw, "text"):
-        raw = raw.text
-
-    # If it's a list, join it
-    elif isinstance(raw, list):
-        raw = " ".join(map(str, raw))
-
-    # Otherwise, stringify
-    else:
-        raw = str(raw)
-
-    # Clean up TextBlock(...) or similar wrappers
-    match = re.search(r"text=['\"](.*?)['\"]\)?$", raw, re.DOTALL)
+    match = re.search(r"text=['\"](.*?)['\"]\)?$", text, re.DOTALL)
     if match:
-        raw = match.group(1)
+        text = match.group(1)
+    
+    # Replace \n with proper HTML breaks
+    text = text.replace("\\n", "<br>")
+    
+    # Format numbered sections
+    text = re.sub(r'(\d+\.)', r'<br><strong>\1</strong>', text)
+    
+    # Format headers
+    text = re.sub(r'([A-Za-z\s]+):(\s*\n|\s+)', r'<br><strong>\1:</strong>', text)
+    
+    # Add spacing between sections
+    text = text.replace("\n\n", "<br><br>")
+    
+    return f"""
+    <div style='
+        background-color: #f8f9fa;
+        border-left: 4px solid #3366CC;
+        border-radius: 4px;
+        padding: 15px;
+        margin: 10px 0;
+        font-size: 16px;
+        line-height: 1.6;
+        color: #333;
+    '>
+        {text}
+    </div>
+    """
 
-    # Decode escaped characters
-    clean = raw.encode().decode('unicode_escape')
-
-    # Final line break formatting
-    return clean
+def display_llm_response(content, title=None):
+    """
+    Display an LLM response with consistent styling and optional title.
+    """
+    formatted_content = format_llm_output(content)
+    
+    if title:
+        st.markdown(f"<h4 style='color: #3366CC; margin-bottom: 10px;'>{title}</h4>", unsafe_allow_html=True)
+    
+    st.markdown(formatted_content, unsafe_allow_html=True)
 
 # Main application function
 def main():
@@ -114,56 +196,14 @@ def main():
     components = initialize_components()
     initialize_session_state()
     
-    # Custom CSS
-    st.markdown("""
-    <style>
-    .main-header {
-        font-size: 2.5rem;
-        color: #3366CC;
-        margin-bottom: 1rem;
-    }
-    .sub-header {
-        font-size: 1.8rem;
-        margin-top: 1.5rem;
-        margin-bottom: 1rem;
-    }
-    .card {
-        padding: 1.5rem;
-        border-radius: 0.5rem;
-        background-color: #f8f9fa;
-        margin-bottom: 1rem;
-        border-left: 4px solid #3366CC;
-    }
-    .metric-card {
-        text-align: center;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        background-color: #f8f9fa;
-    }
-    .metric-value {
-        font-size: 1.8rem;
-        font-weight: bold;
-        color: #3366CC;
-    }
-    .metric-label {
-        font-size: 1rem;
-        color: #666;
-    }
-    .agent-response {
-        padding: 1rem;
-        border-radius: 0.5rem;
-        background-color: #f1f7ff;
-        margin-bottom: 1rem;
-        border-left: 4px solid #3366CC;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+    # Apply CSS styles
+    apply_css()
     
     # Create sidebar
     create_sidebar(components)
     
     # Display header
-    st.markdown("<h1 class='main-header'>AI Personal Financial Portal</h1>", unsafe_allow_html=True)
+    display_header("AI Personal Financial Portal")
     
     # Display current view based on navigation
     if st.session_state.current_view == "dashboard":
@@ -187,134 +227,42 @@ def main():
     st.markdown("---")
     st.markdown("© 2025 AI Personal Financial Portal | Powered by Anthropic Claude")
 
-def create_sidebar(components):
-    """Create the sidebar with navigation and user info."""
-    with st.sidebar:
-        st.title("Navigation")
-        
-        # Navigation buttons
-        if st.button("📊 Dashboard", use_container_width=True):
-            st.session_state.current_view = "dashboard"
-            st.rerun()
-        
-        if st.button("👤 Financial Profile", use_container_width=True):
-            st.session_state.current_view = "profile"
-            st.rerun()
-        
-        if st.button("💰 Budget Manager", use_container_width=True):
-            st.session_state.current_view = "budget"
-            st.rerun()
-        
-        if st.button("📈 Investment Planner", use_container_width=True):
-            st.session_state.current_view = "investments"
-            st.rerun()
-        
-        if st.button("💳 Debt Manager", use_container_width=True):
-            st.session_state.current_view = "debt"
-            st.rerun()
-        
-        if st.button("🎯 Savings Goals", use_container_width=True):
-            st.session_state.current_view = "savings"
-            st.rerun()
-        
-        if st.button("📝 Tax Optimizer", use_container_width=True):
-            st.session_state.current_view = "tax"
-            st.rerun()
-        
-        if st.button("💬 AI Financial Advisor", use_container_width=True):
-            st.session_state.current_view = "advisor"
-            st.rerun()
-        
-        st.markdown("---")
-        
-        # User quick stats
-        st.subheader("Quick Stats")
-        total_income = sum(st.session_state.user_data["income"].values())
-        total_expenses = sum(st.session_state.user_data["expenses"].values())
-        
-        st.metric("Monthly Income", f"${total_income:,.2f}")
-        st.metric("Monthly Expenses", f"${total_expenses:,.2f}")
-        st.metric("Monthly Savings", f"${total_income - total_expenses:,.2f}")
-        
-        st.markdown("---")
-        
-        # Data actions
-        st.subheader("Actions")
-        if st.button("Save Financial Data", use_container_width=True):
-            success = components["data_loader"].save_user_data(st.session_state.user_data, user_id="user")
-            if success:
-                st.success("Financial data saved successfully!")
-            else:
-                st.error("Failed to save financial data")
-        
-        # Information
-        st.markdown("---")
-        st.info("This is a multi-agent AI system designed to help you manage your personal finances.")
-
 def show_dashboard_view(components):
     """Show the main dashboard view with financial overview."""
     st.markdown("<h2 class='sub-header'>Financial Dashboard</h2>", unsafe_allow_html=True)
     
-    # Financial Summary Section
-    st.markdown("<h3>Financial Summary</h3>", unsafe_allow_html=True)
-    
-    # Calculate key metrics
-    user_data = st.session_state.user_data
+    # Get components
+    agent_manager = components["agent_manager"]
     visualizer = components["visualizer"]
     data_loader = components["data_loader"]
     
-    # Calculate net worth
-    net_worth_data = data_loader.calculate_net_worth(user_data)
+    # Get user data
+    user_data = st.session_state.user_data
     
-    # Display metrics in columns
-    col1, col2, col3 = st.columns(3)
+    # Financial Summary Section
+    st.markdown("<h3>Financial Summary</h3>", unsafe_allow_html=True)
     
-    with col1:
-        st.markdown(f"""
-            <div class='metric-card'>
-                <div class='metric-value'>${net_worth_data['net_worth']:,.2f}</div>
-                <div class='metric-label'>Net Worth</div>
-            </div>
-        """, unsafe_allow_html=True)
-
-    with col2:
-        monthly_income = sum(user_data["income"].values())
-        st.markdown(f"""
-            <div class='metric-card'>
-                <div class='metric-value'>${monthly_income:,.2f}</div>
-                <div class='metric-label'>Monthly Income</div>
-            </div>
-        """, unsafe_allow_html=True)
-
-    with col3:
-        monthly_expenses = sum(user_data["expenses"].values())
-        savings_rate = ((monthly_income - monthly_expenses) / monthly_income) * 100 if monthly_income > 0 else 0
-        st.markdown(f"""
-            <div class='metric-card'>
-                <div class='metric-value'>{savings_rate:.1f}%</div>
-                <div class='metric-label'>Savings Rate</div>
-            </div>
-        """, unsafe_allow_html=True)
+    # Render dashboard metrics
+    render_dashboard_metrics(user_data)
     
     # Charts Section
     st.markdown("<h3>Financial Charts</h3>", unsafe_allow_html=True)
     
-    # Tabs for different charts
-    tab1, tab2, tab3 = st.tabs(["Budget Breakdown", "Net Worth", "Asset Allocation"])
+    # Create tabs
+    tabs = create_tabs(["Budget Breakdown", "Net Worth", "Asset Allocation"])
     
-    with tab1:
+    with tabs[0]:
         # Budget breakdown chart
         budget_chart = visualizer.create_budget_chart(user_data)
-        st.plotly_chart(budget_chart, use_container_width=True, key="dashboard_tab1_budget_chart")
+        display_chart(budget_chart, key="dashboard_tab1_budget_chart")
     
-    with tab2:
+    with tabs[1]:
         demo_monthly_data = visualizer.generate_demo_monthly_data(12)
         income_expense_chart = visualizer.create_income_expense_trend_chart(demo_monthly_data)
-        st.plotly_chart(income_expense_chart, use_container_width=True, key="dashboard_tab1_income_expense_chart")
+        display_chart(income_expense_chart, key="dashboard_tab1_income_expense_chart")
     
-    with tab3:
+    with tabs[2]:
         # Asset allocation chart
-        # Use portfolio data if available, otherwise create a placeholder
         if st.session_state.portfolio_data["holdings"]:
             portfolio = st.session_state.portfolio_data
         else:
@@ -329,7 +277,7 @@ def show_dashboard_view(components):
             }
         
         allocation_chart = visualizer.create_investment_allocation_chart(portfolio)
-        st.plotly_chart(allocation_chart, use_container_width=True,key="dashboard_tab3_allocation_chart")
+        display_chart(allocation_chart, key="dashboard_tab3_allocation_chart")
     
     # AI Insights Section
     st.markdown("<h3>AI Financial Insights</h3>", unsafe_allow_html=True)
@@ -337,8 +285,7 @@ def show_dashboard_view(components):
     if st.button("Generate Financial Insights"):
         with st.spinner("Analyzing your financial data..."):
             # Get holistic advice from agent manager
-            agent_manager = components["agent_manager"]
-            insights = agent_manager.get_holistic_advice(st.session_state.user_data, "Provide key financial insights")
+            insights = agent_manager.get_holistic_advice(user_data, "Provide key financial insights")
             
             # Store in session state
             st.session_state.agent_outputs["dashboard_insights"] = insights
@@ -346,59 +293,7 @@ def show_dashboard_view(components):
     # Display insights if available
     if "dashboard_insights" in st.session_state.agent_outputs:
         insights = st.session_state.agent_outputs["dashboard_insights"]
-
-        # --- CONSENSUS INSIGHTS ---
-        # Extract and clean the consensus text
-        raw_text = insights['consensus'].text if hasattr(insights['consensus'], 'text') else str(insights['consensus'])
-
-        # Remove TextBlock(...) wrapper if present
-        match = re.search(r'text\s*=\s*["\'](.+?)["\']', raw_text, re.DOTALL)
-        clean_text = match.group(1) if match else raw_text
-
-        # Final formatting
-        formatted_consensus = clean_text.encode().decode('unicode_escape')
-
-    
-
-        st.markdown(
-            f"""
-            <div style="
-                padding: 1rem;
-                border-left: 4px solid #3366CC;
-                border-radius: 6px;
-                margin-bottom: 2rem;
-                color: inherit;
-                background-color: rgba(51, 102, 204, 0.05);
-            ">
-                <h4 style="margin-top: 0; color: inherit;">Key Financial Insights</h4>
-                <p style="color: inherit;">{formatted_consensus}</p>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        # --- AGENT RESPONSES ---
-        with st.expander("See perspectives from specialized financial agents"):
-            for agent_type, response in insights.get("agent_responses", {}).items():
-                formatted_agent_text = format_llm_text(response)
-
-                st.markdown(
-                    f"""
-                    <div style="
-                        padding: 1rem;
-                        border-left: 4px solid #4A90E2;
-                        border-radius: 6px;
-                        margin-bottom: 1.5rem;
-                        background-color: #f1f7ff;
-                        color: #111;
-                    ">
-                        <h5 style="margin-top: 0; color: #3366CC;">{agent_type.capitalize()} Agent</h5>
-                        <p>{formatted_agent_text}</p>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-
+        display_llm_response(insights.get("consensus", ""), "Key Financial Insights")
 
 def show_profile_view(components):
     """Show the financial profile view for data entry."""
@@ -770,22 +665,18 @@ def show_budget_view(components):
         st.markdown("### Budget Summary")
         
         # Calculate monthly totals
-        total_income = sum(user_data["income"].values())
-        total_expenses = sum(user_data["expenses"].values())
+        total_income = calculate_total_income(user_data["income"])
+        total_expenses = calculate_total_expenses(user_data["expenses"])
         surplus_deficit = total_income - total_expenses
         
         # Display summary metrics
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric("Total Monthly Income", f"${total_income:,.2f}")
-        
-        with col2:
-            st.metric("Total Monthly Expenses", f"${total_expenses:,.2f}")
-        
-        with col3:
-            st.metric("Monthly Surplus/Deficit", f"${surplus_deficit:,.2f}", 
-                     delta=f"{(surplus_deficit / total_income * 100 if total_income > 0 else 0):.1f}% of Income")
+        metrics = [
+            ("Total Monthly Income", format_currency(total_income), None),
+            ("Total Monthly Expenses", format_currency(total_expenses), None),
+            ("Monthly Surplus/Deficit", format_currency(surplus_deficit), 
+             format_percentage(surplus_deficit / total_income * 100 if total_income > 0 else 0))
+        ]
+        create_metric_columns(metrics)
         
         # Budget charts
         st.markdown("### Budget Breakdown")
@@ -794,11 +685,11 @@ def show_budget_view(components):
         
         with col1:
             budget_chart = visualizer.create_budget_chart(user_data)
-            st.plotly_chart(budget_chart, use_container_width=True, key="col1_budget_chart")
+            display_chart(budget_chart, key="col1_budget_chart")
         
         with col2:
             expense_pie = visualizer.create_expense_pie_chart(user_data["expenses"])
-            st.plotly_chart(expense_pie, use_container_width=True, key="col2_expense_pie")
+            display_chart(expense_pie, key="col2_expense_pie")
         
         # Budget AI Analysis
         st.markdown("### Budget Analysis")
@@ -814,23 +705,9 @@ def show_budget_view(components):
         
         # Display analysis if available
         if "budget_analysis" in st.session_state.agent_outputs:
-            raw_text = st.session_state.agent_outputs["budget_analysis"].get("analysis", "")
-            formatted_text = format_llm_text(raw_text)
-
-            st.markdown("""
-                <div style='
-                    background-color: #f1f7ff;
-                    padding: 1rem;
-                    border-left: 4px solid #3366CC;
-                    border-radius: 0.5rem;
-                    color: #111;
-                    margin-top: 1rem;
-                '>
-                    <h4>Budget Analysis</h4>
-                    <p>{}</p>
-                </div>
-            """.format(formatted_text), unsafe_allow_html=True)
-
+            analysis = st.session_state.agent_outputs["budget_analysis"]
+            display_llm_response(analysis.get("analysis", ""), "Budget Analysis")
+    
     with tabs[1]:
         # Income Analysis
         st.markdown("### Income Sources")
@@ -845,13 +722,13 @@ def show_budget_view(components):
         
         # Format for display
         income_display = income_df.copy()
-        income_display["Amount"] = income_display["Amount"].apply(lambda x: f"${x:,.2f}")
-        income_display["Percentage"] = income_display["Percentage"].apply(lambda x: f"{x:.1f}%")
+        income_display["Amount"] = income_display["Amount"].apply(lambda x: format_currency(x))
+        income_display["Percentage"] = income_display["Percentage"].apply(lambda x: format_percentage(x))
         
         # Display table
-        st.table(income_display)
+        display_dataframe(income_display)
         
-        # Income history chart (demo data)
+        # Income history chart
         st.markdown("### Income History")
         
         demo_monthly_data = visualizer.generate_demo_monthly_data(12)
@@ -872,7 +749,7 @@ def show_budget_view(components):
             template="plotly_white"
         )
         
-        st.plotly_chart(income_trend, use_container_width=True, key="income_history_income_trend")
+        display_chart(income_trend, key="income_history_income_trend")
     
     with tabs[2]:
         # Expense Analysis
@@ -888,16 +765,16 @@ def show_budget_view(components):
         
         # Format for display
         expense_display = expense_df.copy()
-        expense_display["Amount"] = expense_display["Amount"].apply(lambda x: f"${x:,.2f}")
-        expense_display["Percentage"] = expense_display["Percentage"].apply(lambda x: f"{x:.1f}%")
+        expense_display["Amount"] = expense_display["Amount"].apply(lambda x: format_currency(x))
+        expense_display["Percentage"] = expense_display["Percentage"].apply(lambda x: format_percentage(x))
         
         # Display table
-        st.table(expense_display)
+        display_dataframe(expense_display)
         
         # Expense pie chart
         st.markdown("### Expense Distribution")
         expense_pie = visualizer.create_expense_pie_chart(user_data["expenses"])
-        st.plotly_chart(expense_pie, use_container_width=True, key="expense_categories_pie")
+        display_chart(expense_pie, key="expense_categories_pie")
         
         # Spending Optimization
         st.markdown("### Spending Optimization")
@@ -910,42 +787,11 @@ def show_budget_view(components):
                 
                 # Store in session state
                 st.session_state.agent_outputs["savings_opportunities"] = savings_opps
-
+        
         # Display savings opportunities if available
         if "savings_opportunities" in st.session_state.agent_outputs:
             opps = st.session_state.agent_outputs["savings_opportunities"]
-
-            # Handle potential formatting issues with \n or object text
-            if isinstance(opps, list):
-                # Handle list of dicts with 'opportunities' key
-                first = opps[0]
-                if isinstance(first, dict) and "opportunities" in first:
-                    raw_text = str(first["opportunities"])
-                else:
-                    raw_text = " ".join(map(str, opps))
-            else:
-                raw_text = str(opps)
-            formatted_text = format_llm_text(raw_text)
-
-            # Styled savings div
-            st.markdown(
-                f"""
-                <div style="
-                    padding: 1rem;
-                    border-left: 4px solid #109618;
-                    border-radius: 6px;
-                    margin-top: 1.5rem;
-                    margin-bottom: 1.5rem;
-                    color: inherit;
-                    background-color: rgba(16, 150, 24, 0.05);
-                ">
-                    <h4 style="margin-top: 0; color: inherit;">Savings Opportunities</h4>
-                    <p style="color: inherit;">{formatted_text}</p>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
+            display_llm_response(opps.get("opportunities", ""), "Savings Opportunities")
     
     with tabs[3]:
         # Budget Planning
@@ -974,33 +820,7 @@ def show_budget_view(components):
         # Display budget plan if available
         if "budget_plan" in st.session_state.agent_outputs:
             plan = st.session_state.agent_outputs["budget_plan"]
-            
-            # Safely extract and format the text
-            raw_text = plan.get("budget_plan", "")
-            if hasattr(raw_text, "text"):
-                raw_text = raw_text.text
-            elif isinstance(raw_text, list):
-                raw_text = " ".join(map(str, raw_text))
-            else:
-                raw_text = str(raw_text)
-            formatted_text = format_llm_text(raw_text)
-
-            # Render the formatted plan
-            st.markdown("""
-                <div style='
-                    background-color: #f1f7ff;
-                    padding: 1rem;
-                    border-left: 4px solid #3366CC;
-                    border-radius: 0.5rem;
-                    color: #111;
-                    margin-top: 1rem;
-                '>
-                    <h4>Personalized Budget Plan</h4>
-                    <p>{}</p>
-                </div>
-            """.format(formatted_text), unsafe_allow_html=True)
-
-
+            display_llm_response(plan.get("budget_plan", ""), "Personalized Budget Plan")
         
         # Budget templates
         st.markdown("#### Budget Templates")
@@ -1026,33 +846,7 @@ def show_budget_view(components):
             template = st.session_state.agent_outputs["budget_template"]
             
             if template["name"] == selected_template:
-                # Normalize and clean up template details
-                raw_details = template["details"]
-                if hasattr(raw_details, "text"):
-                    raw_details = raw_details.text
-                elif isinstance(raw_details, list):
-                    raw_details = " ".join(map(str, raw_details))
-                else:
-                    raw_details = str(raw_details)
-
-                formatted_details = raw_details
-
-                # Display inside styled div
-                st.markdown("""
-                    <div style='
-                        background-color: #f1f7ff;
-                        padding: 1rem;
-                        border-left: 4px solid #3366CC;
-                        border-radius: 0.5rem;
-                        color: #111;
-                        margin-top: 1rem;
-                    '>
-                        <h4>{}</h4>
-                        <p>{}</p>
-                    </div>
-                """.format(template['name'], formatted_details), unsafe_allow_html=True)
-
-
+                display_llm_response(template["details"], template["name"])
 
 def show_investments_view(components):
     """Show the investment planner view."""
@@ -1067,107 +861,138 @@ def show_investments_view(components):
     user_data = st.session_state.user_data
     
     # Create tabs
-    tabs = st.tabs(["Portfolio Overview", "Asset Allocation", "Retirement Planning", "Investment Recommendations"])
+    tabs = st.tabs(["Portfolio Overview", "Investment Analysis", "Asset Allocation", "Investment Goals"])
     
     with tabs[0]:
-        # Portfolio Overview
-        st.markdown("### Investment Summary")
+        st.markdown("### Investment Portfolio")
         
-        # Calculate portfolio values
-        retirement_value = sum(account.get("balance", 0) for account in user_data["investments"].get("retirement_accounts", []))
-        brokerage_value = sum(account.get("balance", 0) for account in user_data["investments"].get("brokerage_accounts", []))
-        real_estate_value = sum(property.get("estimated_value", 0) - property.get("mortgage_balance", 0) 
-                               for property in user_data["investments"].get("real_estate", []))
-        other_value = sum(investment.get("value", 0) for investment in user_data["investments"].get("other_investments", []))
-        
-        total_investments = retirement_value + brokerage_value + real_estate_value + other_value
-        
-        # Display summary metrics
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("Retirement Accounts", f"${retirement_value:,.2f}")
-        
-        with col2:
-            st.metric("Brokerage Accounts", f"${brokerage_value:,.2f}")
-        
-        with col3:
-            st.metric("Real Estate Equity", f"${real_estate_value:,.2f}")
-        
-        with col4:
-            st.metric("Total Investments", f"${total_investments:,.2f}")
-        
-        # # Portfolio file upload
-        # st.markdown("### Upload Portfolio Data")
-        
-        # uploaded_file = st.file_uploader("Upload investment portfolio CSV", type=["csv"])
-        
-        # if uploaded_file is not None:
-        #     try:
-        #         # Save file temporarily
-        #         with open("temp_portfolio.csv", "wb") as f:
-        #             f.write(uploaded_file.getvalue())
-                
-        #         # Process file
-        #         portfolio = data_loader.import_investment_portfolio("temp_portfolio.csv")
-                
-        #         # Save to session state
-        #         st.session_state.portfolio_data = portfolio
-                
-        #         st.success(f"Successfully loaded portfolio with {len(portfolio['holdings'])} holdings!")
-                
-        #         # Clean up
-        #         if os.path.exists("temp_portfolio.csv"):
-        #             os.remove("temp_portfolio.csv")
-        #     except Exception as e:
-        #         st.error(f"Error processing portfolio: {e}")
-        
-        # # Display portfolio if available
-        # if st.session_state.portfolio_data.get("holdings"):
-        #     portfolio = st.session_state.portfolio_data
+        # Display current investments
+        if user_data["investments"]:
+            # Calculate portfolio values
+            retirement_value = sum(account.get("balance", 0) for account in user_data["investments"].get("retirement_accounts", []))
+            brokerage_value = sum(account.get("balance", 0) for account in user_data["investments"].get("brokerage_accounts", []))
+            real_estate_value = sum(property.get("estimated_value", 0) - property.get("mortgage_balance", 0) 
+                                   for property in user_data["investments"].get("real_estate", []))
+            other_value = sum(investment.get("value", 0) for investment in user_data["investments"].get("other_investments", []))
             
-        #     st.markdown("### Current Portfolio")
+            total_investments = retirement_value + brokerage_value + real_estate_value + other_value
             
-        #     # Create DataFrame for display
-        #     holdings_df = pd.DataFrame(portfolio["holdings"])
+            # Display summary metrics
+            metrics = [
+                ("Retirement Accounts", format_currency(retirement_value), None),
+                ("Brokerage Accounts", format_currency(brokerage_value), None),
+                ("Real Estate Equity", format_currency(real_estate_value), None),
+                ("Total Investments", format_currency(total_investments), None)
+            ]
+            create_metric_columns(metrics)
             
-        #     # Calculate additional metrics
-        #     if "weight" not in holdings_df.columns:
-        #         holdings_df["weight"] = holdings_df["value"] / holdings_df["value"].sum() * 100
+            # Create investment table
+            inv_data = []
             
-        #     # Format for display
-        #     display_df = holdings_df.copy()
-        #     if "price" in display_df.columns:
-        #         display_df["price"] = display_df["price"].apply(lambda x: f"${x:,.2f}")
-        #     if "value" in display_df.columns:
-        #         display_df["value"] = display_df["value"].apply(lambda x: f"${x:,.2f}")
-        #     if "weight" in display_df.columns:
-        #         display_df["weight"] = display_df["weight"].apply(lambda x: f"{x:.2f}%")
+            # Add retirement accounts
+            for account in user_data["investments"].get("retirement_accounts", []):
+                inv_data.append({
+                    "Type": "Retirement Account",
+                    "Account": account.get("name", ""),
+                    "Amount": format_currency(account.get("balance", 0)),
+                    "Allocation": format_percentage(account.get("balance", 0) / total_investments * 100 if total_investments > 0 else 0)
+                })
             
-        #     # Display holdings table
-        #     st.dataframe(display_df, use_container_width=True)
+            # Add brokerage accounts
+            for account in user_data["investments"].get("brokerage_accounts", []):
+                inv_data.append({
+                    "Type": "Brokerage Account",
+                    "Account": account.get("name", ""),
+                    "Amount": format_currency(account.get("balance", 0)),
+                    "Allocation": format_percentage(account.get("balance", 0) / total_investments * 100 if total_investments > 0 else 0)
+                })
             
-        #     # Portfolio analysis button
-        #     if st.button("Analyze Portfolio"):
-        #         with st.spinner("Analyzing your investment portfolio..."):
-        #             # Get analysis from investment agent
-        #             investment_agent = agent_manager.get_agent("investment")
-        #             portfolio_analysis = investment_agent.analyze_portfolio(portfolio)
+            # Add real estate
+            for property in user_data["investments"].get("real_estate", []):
+                equity = property.get("estimated_value", 0) - property.get("mortgage_balance", 0)
+                inv_data.append({
+                    "Type": "Real Estate",
+                    "Account": property.get("name", ""),
+                    "Amount": format_currency(equity),
+                    "Allocation": format_percentage(equity / total_investments * 100 if total_investments > 0 else 0)
+                })
+            
+            # Add other investments
+            for investment in user_data["investments"].get("other_investments", []):
+                inv_data.append({
+                    "Type": "Other Investment",
+                    "Account": investment.get("name", ""),
+                    "Amount": format_currency(investment.get("value", 0)),
+                    "Allocation": format_percentage(investment.get("value", 0) / total_investments * 100 if total_investments > 0 else 0)
+                })
+            
+            if inv_data:
+                display_dataframe(pd.DataFrame(inv_data))
+        else:
+            st.info("No investment data available. Add investments in your Financial Profile.")
+        
+        # Portfolio analysis button
+        if st.button("Analyze Portfolio"):
+            with st.spinner("Analyzing your investment portfolio..."):
+                try:
+                    # Get investment agent
+                    investment_agent = agent_manager.get_agent("investment")
                     
-        #             # Store in session state
-        #             st.session_state.agent_outputs["portfolio_analysis"] = portfolio_analysis
-            
-        #     # Display analysis if available
-        #     if "portfolio_analysis" in st.session_state.agent_outputs:
-        #         analysis = st.session_state.agent_outputs["portfolio_analysis"]
-                
-        #         st.markdown("<div class='agent-response'>", unsafe_allow_html=True)
-        #         st.markdown(f"### Portfolio Analysis\n\n{analysis['analysis']}")
-        #         st.markdown("</div>", unsafe_allow_html=True)
-        # else:
-        #     st.info("Upload a portfolio CSV or enter your investments in the Financial Profile section to see a detailed analysis.")
+                    # Prepare portfolio data for analysis
+                    portfolio_data = {
+                        "investments": user_data["investments"],
+                        "risk_tolerance": user_data["profile"].get("risk_tolerance", "moderate"),
+                        "time_horizon": user_data["profile"].get("time_horizon", "medium"),
+                        "age": user_data["personal"].get("age", 35),
+                        "goals": [goal.get("name") for goal in user_data["profile"].get("financial_goals", [])]
+                    }
+                    
+                    # Get portfolio analysis
+                    portfolio_analysis = investment_agent.analyze_portfolio(portfolio_data)
+                    
+                    # Store in session state
+                    st.session_state.agent_outputs["portfolio_analysis"] = portfolio_analysis
+                    
+                    # Display analysis immediately
+                    if portfolio_analysis:
+                        display_llm_response(portfolio_analysis.get("analysis", ""), "Portfolio Analysis")
+                except Exception as e:
+                    st.error(f"Error analyzing portfolio: {str(e)}")
+                    st.info("Please make sure you have entered your investment data in the Financial Profile section.")
     
     with tabs[1]:
+        # Investment Analysis
+        st.markdown("### Investment Analysis")
+        
+        # Display portfolio analysis if available
+        if "portfolio_analysis" in st.session_state.agent_outputs:
+            analysis = st.session_state.agent_outputs["portfolio_analysis"]
+            display_llm_response(analysis.get("analysis", ""), "Portfolio Analysis")
+        
+        # Investment history chart
+        st.markdown("### Investment History")
+        
+        demo_monthly_data = visualizer.generate_demo_monthly_data(12)
+        investment_trend = go.Figure()
+        investment_trend.add_trace(go.Scatter(
+            x=[data["date"] for data in demo_monthly_data],
+            y=[data["savings"] for data in demo_monthly_data],
+            mode="lines+markers",
+            name="Monthly Investment",
+            line=dict(color="#66BB6A", width=3),
+            marker=dict(color="#66BB6A", size=8)
+        ))
+        
+        investment_trend.update_layout(
+            title="Monthly Investment Trend",
+            xaxis_title="Month",
+            yaxis_title="Amount ($)",
+            template="plotly_white"
+        )
+        
+        display_chart(investment_trend, key="investment_history_investment_trend")
+    
+    with tabs[2]:
         # Asset Allocation
         st.markdown("### Current Asset Allocation")
         
@@ -1177,44 +1002,21 @@ def show_investments_view(components):
             allocation_data = portfolio["asset_allocation"]
         else:
             # Aggregate asset allocation from user data
-            allocation_data = {}
-            
-            # Add retirement account allocations
-            for account in user_data["investments"].get("retirement_accounts", []):
-                balance = account.get("balance", 0)
-                for asset_class, percentage in account.get("asset_allocation", {}).items():
-                    allocation_data[asset_class] = allocation_data.get(asset_class, 0) + (balance * percentage / 100)
-            
-            # Add brokerage account allocations
-            for account in user_data["investments"].get("brokerage_accounts", []):
-                balance = account.get("balance", 0)
-                for asset_class, percentage in account.get("asset_allocation", {}).items():
-                    allocation_data[asset_class] = allocation_data.get(asset_class, 0) + (balance * percentage / 100)
-            
-            # Add real estate
-            real_estate_equity = sum(property.get("estimated_value", 0) - property.get("mortgage_balance", 0) 
-                                   for property in user_data["investments"].get("real_estate", []))
-            if real_estate_equity > 0:
-                allocation_data["real_estate"] = allocation_data.get("real_estate", 0) + real_estate_equity
-            
-            # Convert to percentages
-            total = sum(allocation_data.values())
-            if total > 0:
-                allocation_data = {k: (v / total) * 100 for k, v in allocation_data.items()}
+            allocation_data = calculate_asset_allocation(user_data["investments"])
         
         # Create allocation chart
         if allocation_data:
             # Create pie chart
             portfolio_for_chart = {"asset_allocation": allocation_data}
             allocation_chart = visualizer.create_investment_allocation_chart(portfolio_for_chart)
-            st.plotly_chart(allocation_chart, use_container_width=True, key="asset_allocation_chart")
+            display_chart(allocation_chart, key="asset_allocation_chart")
             
             # Display allocation table
             allocation_df = pd.DataFrame([
-                {"Asset Class": asset_class, "Percentage": f"{percentage:.2f}%"}
+                {"Asset Class": asset_class, "Percentage": format_percentage(percentage)}
                 for asset_class, percentage in allocation_data.items()
             ])
-            st.table(allocation_df)
+            display_dataframe(allocation_df)
         else:
             st.info("No asset allocation data available. Please enter your investments in the Financial Profile section.")
         
@@ -1252,299 +1054,62 @@ def show_investments_view(components):
         # Display recommendation if available
         if "allocation_recommendation" in st.session_state.agent_outputs:
             recommendation = st.session_state.agent_outputs["allocation_recommendation"]
-
-            # Extract and clean the text
-            raw_text = recommendation[0].get("recommendations", "")
-            if hasattr(raw_text, "text"):
-                raw_text = raw_text.text
-            elif isinstance(raw_text, list):
-                raw_text = " ".join(map(str, raw_text))
-            else:
-                raw_text = str(raw_text)
-            formatted_text = format_llm_text(raw_text)
-
-            # Render inside styled container
-            st.markdown("""
-                <div style='
-                    background-color: #f1f7ff;
-                    padding: 1rem;
-                    border-left: 4px solid #3366CC;
-                    border-radius: 0.5rem;
-                    color: #111;
-                    margin-top: 1rem;
-                '>
-                    <h4>Recommended Asset Allocation</h4>
-                    <p>{}</p>
-                </div>
-            """.format(formatted_text), unsafe_allow_html=True)
-
-    
-    with tabs[2]:
-        # Retirement Planning
-        st.markdown("### Retirement Planning")
-        
-        # Current retirement savings
-        retirement_value = sum(account.get("balance", 0) for account in user_data["investments"].get("retirement_accounts", []))
-        
-        # Retirement planning inputs
-        st.markdown("#### Retirement Projection Inputs")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            current_age = st.number_input("Current Age", min_value=18, max_value=100, value=user_data["personal"].get("age", 35))
-            retirement_age = st.number_input("Retirement Age", min_value=current_age, max_value=100, value=65)
-        
-        with col2:
-            current_savings = st.number_input("Current Retirement Savings", min_value=0.0, value=float(retirement_value), step=10000.0, format="%0.2f")
-            monthly_contribution = st.number_input("Monthly Contribution", min_value=0.0, value=1000.0, step=100.0, format="%0.2f")
-        
-        with col3:
-            annual_return = st.slider("Expected Annual Return (%)", min_value=1.0, max_value=12.0, value=7.0, step=0.5)
-            inflation_rate = st.slider("Expected Inflation Rate (%)", min_value=1.0, max_value=6.0, value=2.5, step=0.5)
-        
-        # Generate projection if button clicked
-        if st.button("Generate Retirement Projection"):
-            with st.spinner("Calculating retirement projections..."):
-                # Calculate years until retirement
-                years_to_retire = retirement_age - current_age
-                
-                # Generate projection data
-                retirement_projection = visualizer.generate_demo_retirement_projection(years_to_retire)
-                
-                # Adjust projection based on inputs
-                factor = current_savings / 150000  # Adjust for different starting amount
-                contribution_factor = monthly_contribution / 1000  # Adjust for different contribution
-                return_factor = annual_return / 7  # Adjust for different return rate
-                
-                # Scale the projections
-                retirement_projection["baseline"] = [amount * factor * (contribution_factor * 0.7 + 0.3) * 
-                                                    (return_factor * 0.9 + 0.1) 
-                                                    for amount in retirement_projection["baseline"]]
-                
-                retirement_projection["optimistic"] = [amount * factor * (contribution_factor * 0.7 + 0.3) * 
-                                                      (return_factor * 1.1) 
-                                                      for amount in retirement_projection["optimistic"]]
-                
-                retirement_projection["conservative"] = [amount * factor * (contribution_factor * 0.7 + 0.3) * 
-                                                        (return_factor * 0.7 + 0.3) 
-                                                        for amount in retirement_projection["conservative"]]
-                
-                # Store in session state
-                st.session_state.agent_outputs["retirement_projection"] = retirement_projection
-                
-                # Get retirement advice from investment agent
-                investment_agent = agent_manager.get_agent("investment")
-                retirement_advice = investment_agent.get_advice(user_data, 
-                                                              f"Provide retirement planning advice for a {current_age} year old with ${current_savings:,.2f} in retirement savings, contributing ${monthly_contribution:,.2f} monthly, planning to retire at age {retirement_age}.")
-                
-                # Store advice in session state
-                st.session_state.agent_outputs["retirement_advice"] = retirement_advice
-        
-        # Display projection if available
-        if "retirement_projection" in st.session_state.agent_outputs:
-            projection = st.session_state.agent_outputs["retirement_projection"]
-            
-            # Create projection chart
-            projection_chart = visualizer.create_retirement_projection_chart(projection)
-            st.plotly_chart(projection_chart, use_container_width=True, key="retirement_projection_chart")
-            
-            # Final values
-            final_baseline = projection["baseline"][-1]
-            final_optimistic = projection["optimistic"][-1]
-            final_conservative = projection["conservative"][-1]
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric("Conservative Estimate", f"${final_conservative:,.2f}")
-            
-            with col2:
-                st.metric("Baseline Estimate", f"${final_baseline:,.2f}")
-            
-            with col3:
-                st.metric("Optimistic Estimate", f"${final_optimistic:,.2f}")
-            
-            # Display retirement advice if available
-        if "retirement_advice" in st.session_state.agent_outputs:
-            advice = st.session_state.agent_outputs["retirement_advice"]
-
-            # Normalize text
-            if hasattr(advice, "text"):
-                raw_text = advice.text
-            elif isinstance(advice, list):
-                raw_text = " ".join(map(str, advice))
-            else:
-                raw_text = str(advice)
-            formatted_text = format_llm_text(raw_text)
-
-            # Render with consistent styling
-            st.markdown("""
-                <div style='
-                    background-color: #f1f7ff;
-                    padding: 1rem;
-                    border-left: 4px solid #3366CC;
-                    border-radius: 0.5rem;
-                    color: #111;
-                    margin-top: 1rem;
-                '>
-                    <h4>Retirement Planning Advice</h4>
-                    <p>{}</p>
-                </div>
-            """.format(formatted_text), unsafe_allow_html=True)
-
+            display_llm_response(recommendation[0].get("recommendations", ""), "Recommended Asset Allocation")
     
     with tabs[3]:
-        # Investment Recommendations
-        st.markdown("### Investment Recommendations")
+        # Investment Goals
+        st.markdown("### Investment Goals")
         
-        # Investment criteria inputs
-        st.markdown("#### Investment Criteria")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            investment_purpose = st.selectbox(
-                "Investment Purpose",
-                ["Retirement", "Short-term Savings", "Education", "Home Purchase", "General Wealth Building"]
-            )
-            
-            investment_timeframe = st.selectbox(
-                "Investment Timeframe",
-                ["0-2 years", "3-5 years", "6-10 years", "10+ years"]
-            )
-        
-        with col2:
-            risk_tolerance = st.select_slider(
-                "Risk Tolerance",
-                options=["Low", "Medium-Low", "Medium", "Medium-High", "High"],
-                value="Medium"
-            )
-            
-            investment_amount = st.number_input(
-                "Investment Amount",
-                min_value=0.0,
-                value=10000.0,
-                step=1000.0,
-                format="%0.2f"
-            )
-        
-        additional_criteria = st.text_area(
-            "Additional Criteria or Preferences",
-            placeholder="E.g., ESG focus, dividend income, tax efficiency, etc."
+        # Investment goals input
+        st.markdown("#### Investment Goals")
+        investment_goals = st.text_area(
+            "Enter your investment goals (one per line)",
+            value="Retirement: Save for a comfortable retirement\nEducation: Save for future education\nEmergency Fund: Build a 3-6 months of expenses fund",
+            height=100
         )
         
-        # Get recommendations
-        if st.button("Get Investment Recommendations"):
-            with st.spinner("Generating investment recommendations..."):
-                # Prepare investment criteria
-                investment_criteria = {
-                    "purpose": investment_purpose,
-                    "timeframe": investment_timeframe,
-                    "risk_tolerance": risk_tolerance,
-                    "amount": investment_amount,
-                    "additional_preferences": additional_criteria
-                }
-                
-                # Get investment recommendations from investment agent
+        # Split into list
+        goal_list = [goal.strip() for goal in investment_goals.split("\n") if goal.strip()]
+        
+        if st.button("Create Investment Plan"):
+            with st.spinner("Creating personalized investment plan..."):
+                # Get investment plan from investment agent
                 investment_agent = agent_manager.get_agent("investment")
-                recommendations = investment_agent.recommend_investments(user_data, investment_criteria)
+                investment_plan = investment_agent.create_investment_plan(user_data, goal_list)
                 
                 # Store in session state
-                st.session_state.agent_outputs["investment_recommendations"] = recommendations
+                st.session_state.agent_outputs["investment_plan"] = investment_plan
         
-        # Display recommendations if available
-        if "investment_recommendations" in st.session_state.agent_outputs:
-            recommendations = st.session_state.agent_outputs["investment_recommendations"]
-
-            # Normalize and clean text
-            raw_text = recommendations[0].get("recommendations", "")
-            if hasattr(raw_text, "text"):
-                raw_text = raw_text.text
-            elif isinstance(raw_text, list):
-                raw_text = " ".join(map(str, raw_text))
-            else:
-                raw_text = str(raw_text)
-            formatted_text = format_llm_text(raw_text)
-
-            # Styled display
-            st.markdown("""
-                <div style='
-                    background-color: #f1f7ff;
-                    padding: 1rem;
-                    border-left: 4px solid #3366CC;
-                    border-radius: 0.5rem;
-                    color: #111;
-                    margin-top: 1rem;
-                '>
-                    <h4>Investment Recommendations</h4>
-                    <p>{}</p>
-                </div>
-            """.format(formatted_text), unsafe_allow_html=True)
-
+        # Display investment plan if available
+        if "investment_plan" in st.session_state.agent_outputs:
+            plan = st.session_state.agent_outputs["investment_plan"]
+            display_llm_response(plan.get("investment_plan", ""), "Personalized Investment Plan")
         
-        # Investment concept explanations
-        st.markdown("### Investment Concepts")
+        # Investment templates
+        st.markdown("#### Investment Templates")
         
-        investment_concepts = [
-            "Dollar-Cost Averaging", 
-            "Asset Allocation", 
-            "Modern Portfolio Theory", 
-            "Tax-Loss Harvesting", 
-            "Dividend Reinvestment", 
-            "Index Funds vs. ETFs"
-        ]
+        template_options = ["Growth-Oriented Portfolio", "Income-Focused Portfolio", "Balanced Portfolio", "Defensive Portfolio"]
+        selected_template = st.selectbox("Select an investment template", template_options)
         
-        selected_concept = st.selectbox("Learn about investment concepts", investment_concepts)
-        
-        complexity_levels = ["Basic", "Intermediate", "Advanced"]
-        selected_level = st.select_slider("Explanation level", options=complexity_levels, value="Intermediate")
-        
-        if st.button("Explain Concept"):
-            with st.spinner(f"Generating explanation for {selected_concept}..."):
-                # Get explanation from investment agent
-                investment_agent = agent_manager.get_agent("investment")
-                explanation = investment_agent.explain_investment_concept(selected_concept, selected_level.lower())
+        if st.button("Get Template Details"):
+            with st.spinner("Loading template details..."):
+                # Get template details from knowledge base or LLM
+                llm_utils = components["llm_utils"]
+                template_details = llm_utils.generate_financial_explanation(
+                    f"{selected_template} investment strategy", "intermediate")
                 
                 # Store in session state
-                st.session_state.agent_outputs["concept_explanation"] = {
-                    "concept": selected_concept,
-                    "level": selected_level,
-                    "explanation": explanation
+                st.session_state.agent_outputs["investment_template"] = {
+                    "name": selected_template,
+                    "details": template_details
                 }
         
-        # Display explanation if available
-        if "concept_explanation" in st.session_state.agent_outputs:
-            explanation_data = st.session_state.agent_outputs["concept_explanation"]
-
-            # Only show if it matches the current selection
-            if explanation_data["concept"] == selected_concept and explanation_data["level"] == selected_level:
-                raw_text = explanation_data.get("explanation", "")
-                if hasattr(raw_text, "text"):
-                    raw_text = raw_text.text
-                elif isinstance(raw_text, list):
-                    raw_text = " ".join(map(str, raw_text))
-                else:
-                    raw_text = str(raw_text)
-                formatted_text = format_llm_text(raw_text)
-
-                st.markdown("""
-                    <div style='
-                        background-color: #f1f7ff;
-                        padding: 1rem;
-                        border-left: 4px solid #3366CC;
-                        border-radius: 0.5rem;
-                        color: #111;
-                        margin-top: 1rem;
-                    '>
-                        <h4>{}</h4>
-                        <p>{}</p>
-                    </div>
-                """.format(
-                    f"{explanation_data['concept']} ({explanation_data['level']})",
-                    formatted_text
-                ), unsafe_allow_html=True)
-
+        # Display template details if available
+        if "investment_template" in st.session_state.agent_outputs:
+            template = st.session_state.agent_outputs["investment_template"]
+            
+            if template["name"] == selected_template:
+                display_llm_response(template["details"], template["name"])
 
 def show_debt_view(components):
     """Show the debt manager view."""
@@ -1598,52 +1163,18 @@ def show_debt_view(components):
                 "minimum_payment": mortgage.get("minimum_payment", 0)
             })
         
-        # Auto Loans
-        for loan in user_data["debts"].get("auto_loans", []):
-            all_debts.append({
-                "type": "Auto Loan",
-                "name": loan.get("name", "Auto Loan"),
-                "balance": loan.get("balance", 0),
-                "interest_rate": loan.get("interest_rate", 0),
-                "minimum_payment": loan.get("minimum_payment", 0)
-            })
-        
-        # Personal Loans
-        for loan in user_data["debts"].get("personal_loans", []):
-            all_debts.append({
-                "type": "Personal Loan",
-                "name": loan.get("name", "Personal Loan"),
-                "balance": loan.get("balance", 0),
-                "interest_rate": loan.get("interest_rate", 0),
-                "minimum_payment": loan.get("minimum_payment", 0)
-            })
-        
-        # Other Loans
-        for loan in user_data["debts"].get("other_loans", []):
-            all_debts.append({
-                "type": "Other Loan",
-                "name": loan.get("name", "Other Loan"),
-                "balance": loan.get("balance", 0),
-                "interest_rate": loan.get("interest_rate", 0),
-                "minimum_payment": loan.get("minimum_payment", 0)
-            })
-        
         # Calculate summary metrics
         total_debt = sum(debt["balance"] for debt in all_debts)
         weighted_rate = sum(debt["balance"] * debt["interest_rate"] for debt in all_debts) / total_debt if total_debt > 0 else 0
         monthly_payments = sum(debt["minimum_payment"] for debt in all_debts)
         
         # Display summary metrics
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric("Total Debt", f"${total_debt:,.2f}")
-        
-        with col2:
-            st.metric("Weighted Avg Interest", f"{weighted_rate:.2f}%")
-        
-        with col3:
-            st.metric("Monthly Payments", f"${monthly_payments:,.2f}")
+        metrics = [
+            ("Total Debt", format_currency(total_debt), None),
+            ("Weighted Avg Interest", format_percentage(weighted_rate), None),
+            ("Monthly Payments", format_currency(monthly_payments), None)
+        ]
+        create_metric_columns(metrics)
         
         # Display debt breakdown
         st.markdown("### Debt Breakdown")
@@ -1653,20 +1184,20 @@ def show_debt_view(components):
             debt_df = pd.DataFrame(all_debts)
             
             # Add debt-to-income ratio
-            monthly_income = sum(user_data["income"].values())
-            dti_ratio = monthly_payments / monthly_income * 100 if monthly_income > 0 else 0
+            monthly_income = calculate_total_income(user_data["income"])
+            dti_ratio = calculate_debt_to_income_ratio(monthly_payments, monthly_income)
             
             # Format for display
             display_df = debt_df.copy()
-            display_df["balance"] = display_df["balance"].apply(lambda x: f"${x:,.2f}")
-            display_df["interest_rate"] = display_df["interest_rate"].apply(lambda x: f"{x:.2f}%")
-            display_df["minimum_payment"] = display_df["minimum_payment"].apply(lambda x: f"${x:,.2f}")
+            display_df["balance"] = display_df["balance"].apply(lambda x: format_currency(x))
+            display_df["interest_rate"] = display_df["interest_rate"].apply(lambda x: format_percentage(x))
+            display_df["minimum_payment"] = display_df["minimum_payment"].apply(lambda x: format_currency(x))
             
             # Display table
-            st.dataframe(display_df, use_container_width=True)
+            display_dataframe(display_df)
             
             # Debt-to-income info
-            st.info(f"Debt-to-Income Ratio: {dti_ratio:.2f}% (Monthly Debt Payments / Monthly Income)")
+            st.info(f"Debt-to-Income Ratio: {format_percentage(dti_ratio)} (Monthly Debt Payments / Monthly Income)")
             
             # Display debt analysis button
             if st.button("Analyze Debt Profile"):
@@ -1681,30 +1212,7 @@ def show_debt_view(components):
             # Display analysis if available
             if "debt_analysis" in st.session_state.agent_outputs:
                 analysis = st.session_state.agent_outputs["debt_analysis"]
-                raw_text = analysis.get("analysis", "")
-
-                if hasattr(raw_text, "text"):
-                    raw_text = raw_text.text
-                elif isinstance(raw_text, list):
-                    raw_text = " ".join(map(str, raw_text))
-                else:
-                    raw_text = str(raw_text)
-                formatted_text = format_llm_text(raw_text)
-
-                st.markdown("""
-                    <div style='
-                        background-color: #f1f7ff;
-                        padding: 1rem;
-                        border-left: 4px solid #3366CC;
-                        border-radius: 0.5rem;
-                        color: #111;
-                        margin-top: 1rem;
-                    '>
-                        <h4>Debt Profile Analysis</h4>
-                        <p>{}</p>
-                    </div>
-                """.format(formatted_text), unsafe_allow_html=True)
-
+                display_llm_response(analysis.get("analysis", ""), "Debt Profile Analysis")
         else:
             st.info("No debt information available. Please enter your debts in the Financial Profile section.")
     
@@ -1751,39 +1259,15 @@ def show_debt_view(components):
         # Display repayment plan if available
         if "repayment_plan" in st.session_state.agent_outputs:
             plan = st.session_state.agent_outputs["repayment_plan"]
-
-            # Normalize the repayment plan text
-            raw_text = plan.get("repayment_plan", "")
-            if hasattr(raw_text, "text"):
-                raw_text = raw_text.text
-            elif isinstance(raw_text, list):
-                raw_text = " ".join(map(str, raw_text))
-            else:
-                raw_text = str(raw_text)
-            formatted_text = format_llm_text(raw_text)
-
-            st.markdown(f"""
-                <div style='
-                    background-color: #f1f7ff;
-                    padding: 1rem;
-                    border-left: 4px solid #3366CC;
-                    border-radius: 0.5rem;
-                    color: #111;
-                    margin-top: 1rem;
-                '>
-                    <h4>{plan['strategy'].capitalize()} Repayment Plan</h4>
-                    <p>{formatted_text}</p>
-                </div>
-            """, unsafe_allow_html=True)
-
+            display_llm_response(plan.get("repayment_plan", ""), f"{plan['strategy'].capitalize()} Repayment Plan")
+            
             # Display projection chart if available
             if "debt_projections" in st.session_state.agent_outputs:
                 projections = st.session_state.agent_outputs["debt_projections"]
                 
                 st.markdown("### Debt Payoff Projection")
                 projection_chart = visualizer.create_debt_payoff_chart(projections)
-                st.plotly_chart(projection_chart, use_container_width=True, key="debt_payoff_projection_chart")
-
+                display_chart(projection_chart, key="debt_payoff_projection_chart")
     
     with tabs[2]:
         # Loan Comparison
@@ -1880,12 +1364,12 @@ def show_debt_view(components):
             
             with col1:
                 st.markdown(f"#### Option 1 ({comparison['loan_1']['details']['interest_rate']}%)")
-                st.metric("Monthly Payment", f"${comparison['loan_1']['monthly_payment']:,.2f}")
-                st.metric("Total Interest", f"${comparison['loan_1']['total_interest']:,.2f}")
-                st.metric("Total Cost", f"${comparison['loan_1']['total_cost']:,.2f}")
+                st.metric("Monthly Payment", format_currency(comparison['loan_1']['monthly_payment']))
+                st.metric("Total Interest", format_currency(comparison['loan_1']['total_interest']))
+                st.metric("Total Cost", format_currency(comparison['loan_1']['total_cost']))
                 
                 if comparison['loan_1']['details']['origination_fee'] > 0:
-                    st.text(f"Origination Fee: ${comparison['loan_1']['details']['origination_fee']:,.2f}")
+                    st.text(f"Origination Fee: {format_currency(comparison['loan_1']['details']['origination_fee'])}")
                 
                 if comparison['loan_1']['details']['closing_costs'] > 0:
                     st.text(f"Closing Costs: ${comparison['loan_1']['details']['closing_costs']:,.2f}")
@@ -1911,30 +1395,7 @@ def show_debt_view(components):
             # Display loan evaluation if available
             if "loan_evaluation" in st.session_state.agent_outputs:
                 evaluation = st.session_state.agent_outputs["loan_evaluation"]
-
-                # Normalize the evaluation text
-                raw_text = evaluation.get("evaluation", "")
-                if hasattr(raw_text, "text"):
-                    raw_text = raw_text.text
-                elif isinstance(raw_text, list):
-                    raw_text = " ".join(map(str, raw_text))
-                else:
-                    raw_text = str(raw_text)
-                formatted_text = format_llm_text(raw_text)
-
-                st.markdown(f"""
-                    <div style='
-                        background-color: #f1f7ff;
-                        padding: 1rem;
-                        border-left: 4px solid #3366CC;
-                        border-radius: 0.5rem;
-                        color: #111;
-                        margin-top: 1rem;
-                    '>
-                        <h4>Loan Evaluation</h4>
-                        <p>{formatted_text}</p>
-                    </div>
-                """, unsafe_allow_html=True)
+                display_llm_response(evaluation, "Loan Evaluation")
 
     with tabs[3]:
         # Credit Score
@@ -2026,30 +1487,7 @@ def show_debt_view(components):
         # Display credit analysis if available
         if "credit_analysis" in st.session_state.agent_outputs:
             analysis = st.session_state.agent_outputs["credit_analysis"]
-
-            # Normalize the content
-            raw_text = analysis.get("analysis", "")
-            if hasattr(raw_text, "text"):
-                raw_text = raw_text.text
-            elif isinstance(raw_text, list):
-                raw_text = " ".join(map(str, raw_text))
-            else:
-                raw_text = str(raw_text)
-            formatted_text = format_llm_text(raw_text)
-
-            st.markdown(f"""
-                <div style='
-                    background-color: #f1f7ff;
-                    padding: 1rem;
-                    border-left: 4px solid #3366CC;
-                    border-radius: 0.5rem;
-                    color: #111;
-                    margin-top: 1rem;
-                '>
-                    <h4>Credit Score Improvement Recommendations</h4>
-                    <p>{formatted_text}</p>
-                </div>
-            """, unsafe_allow_html=True)
+            display_llm_response(analysis.get("analysis", ""), "Credit Score Improvement Recommendations")
 
 
 def show_savings_view(components):
@@ -2115,29 +1553,7 @@ def show_savings_view(components):
             # Display prioritization if available
             if "goal_prioritization" in st.session_state.agent_outputs:
                 prioritization = st.session_state.agent_outputs["goal_prioritization"]
-
-                raw_text = prioritization.get("prioritized_plan", "")
-                if hasattr(raw_text, "text"):
-                    raw_text = raw_text.text
-                elif isinstance(raw_text, list):
-                    raw_text = " ".join(map(str, raw_text))
-                else:
-                    raw_text = str(raw_text)
-                formatted_text = format_llm_text(raw_text)
-
-                st.markdown(f"""
-                    <div style='
-                        background-color: #f1f7ff;
-                        padding: 1rem;
-                        border-left: 4px solid #3366CC;
-                        border-radius: 0.5rem;
-                        color: #111;
-                        margin-top: 1rem;
-                    '>
-                        <h4>Goal Prioritization Recommendation</h4>
-                        <p>{formatted_text}</p>
-                    </div>
-                """, unsafe_allow_html=True)
+                display_llm_response(prioritization.get("prioritized_plan", ""), "Goal Prioritization Recommendation")
 
         else:
             st.info("No savings goals found. Add goals in the Financial Profile section or create a new goal below.")
@@ -2216,29 +1632,7 @@ def show_savings_view(components):
         # Display optimization if available
         if "ef_optimization" in st.session_state.agent_outputs:
             optimization = st.session_state.agent_outputs["ef_optimization"]
-
-            raw_text = optimization.get("recommendations", "")
-            if hasattr(raw_text, "text"):
-                raw_text = raw_text.text
-            elif isinstance(raw_text, list):
-                raw_text = " ".join(map(str, raw_text))
-            else:
-                raw_text = str(raw_text)
-            formatted_text = format_llm_text(raw_text)
-
-            st.markdown(f"""
-                <div style='
-                    background-color: #f1f7ff;
-                    padding: 1rem;
-                    border-left: 4px solid #3366CC;
-                    border-radius: 0.5rem;
-                    color: #111;
-                    margin-top: 1rem;
-                '>
-                    <h4>Emergency Fund Recommendations</h4>
-                    <p>{formatted_text}</p>
-                </div>
-            """, unsafe_allow_html=True)
+            display_llm_response(optimization.get("recommendations", ""), "Emergency Fund Recommendations")
 
     
     with tabs[2]:
@@ -2293,23 +1687,7 @@ def show_savings_view(components):
         # Display savings plan if available
         if "savings_plan" in st.session_state.agent_outputs:
             plan = st.session_state.agent_outputs["savings_plan"]
-
-            # Normalize and format text
-            raw_text = plan.get("savings_plan", "")
-            if hasattr(raw_text, "text"):
-                raw_text = raw_text.text
-            elif isinstance(raw_text, list):
-                raw_text = " ".join(map(str, raw_text))
-            formatted_text = format_llm_text(raw_text)
-
-            # Styled div
-            st.markdown("""
-                <div style='background-color:#e8f4fd; padding: 15px; border-radius: 8px; border-left: 4px solid #3366CC; color: #222222;'>
-                    <h4 style='margin-top: 0;'>Savings Plan for {goal_name}</h4>
-                    <p>{content}</p>
-                </div>
-            """.format(goal_name=plan['goal'].get('name', 'Your Goal'), content=formatted_text), unsafe_allow_html=True)
-
+            display_llm_response(plan.get("savings_plan", ""), "Savings Plan")
         
         # Simple savings calculator
         st.markdown("### Savings Calculator")
@@ -2355,22 +1733,7 @@ def show_savings_view(components):
         # Display savings potential if available
         if "savings_potential" in st.session_state.agent_outputs:
             potential = st.session_state.agent_outputs["savings_potential"]
-
-            # Normalize and format text
-            raw_text = potential.get("analysis", "")
-            if hasattr(raw_text, "text"):
-                raw_text = raw_text.text
-            elif isinstance(raw_text, list):
-                raw_text = " ".join(map(str, raw_text))
-            formatted_text = format_llm_text(raw_text)
-
-            # Styled div output
-            st.markdown(f"""
-                <div style='background-color:#e8f4fd; padding: 15px; border-radius: 8px; border-left: 4px solid #3366CC; color: #222222;'>
-                    <h4 style='margin-top: 0;'>Savings Potential Analysis</h4>
-                    <p>{formatted_text}</p>
-                </div>
-            """, unsafe_allow_html=True)
+            display_llm_response(potential.get("analysis", ""), "Savings Potential Analysis")
 
             
             # Display current savings metrics
@@ -2407,50 +1770,13 @@ def show_savings_view(components):
                 }
         
         # Display strategies if available
-
-    if "savings_strategies" in st.session_state.agent_outputs:
-        strategy_data = st.session_state.agent_outputs["savings_strategies"]
-
-        # Only show if it matches the current goal
-        if strategy_data["goal"] == selected_goal:
-            st.markdown(f"### Strategies for {strategy_data['goal']}")
-
-            # Show each strategy in an expander
-            for i, strategy in enumerate(strategy_data["strategies"]):
-                with st.expander(f"Strategy {i+1}: {strategy.get('name', f'Option {i+1}')}"):
-
-                    # Format strategy content
-                    raw_content = strategy.get("content", "")
-                    if hasattr(raw_content, "text"):
-                        raw_content = raw_content.text
-                    elif isinstance(raw_content, list):
-                        raw_content = " ".join(map(str, raw_content))
-                    formatted_content = str(raw_content)
-
-                    # Display inside styled div
-                    st.markdown(f"""
-                        <div style='background-color:#e8f4fd; padding: 15px; border-radius: 8px; border-left: 4px solid #3366CC; color: #222222;'>
-                            <p>{formatted_content}</p>
-                        </div>
-                        <br/>
-                    """, unsafe_allow_html=True)
-
-                    # Add option to save strategy as a goal
-                    if st.button(f"Create Goal from Strategy {i+1}", key=f"create_goal_{i}"):
-                        goal_name = f"{selected_goal} - Strategy {i+1}"
-
-                        if "savings_goals" not in user_data["savings"]:
-                            user_data["savings"]["savings_goals"] = []
-
-                        user_data["savings"]["savings_goals"].append({
-                            "name": goal_name,
-                            "target": 10000.0,
-                            "current": 0.0,
-                            "deadline": (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d")
-                        })
-
-                        st.success(f"Added new goal: {goal_name}")
-                        st.rerun()
+        if "savings_strategies" in st.session_state.agent_outputs:
+            strategy_data = st.session_state.agent_outputs["savings_strategies"]
+            if strategy_data["goal"] == selected_goal:
+                st.markdown(f"### Strategies for {strategy_data['goal']}")
+                for i, strategy in enumerate(strategy_data["strategies"]):
+                    with st.expander(f"Strategy {i+1}: {strategy.get('name', f'Option {i+1}')}"):
+                        display_llm_response(strategy, f"Strategy {i+1}")
 
 def show_tax_view(components):
     """Show the tax optimizer view."""
@@ -2504,86 +1830,7 @@ def show_tax_view(components):
         # Display tax analysis if available
         if "tax_analysis" in st.session_state.agent_outputs:
             analysis = st.session_state.agent_outputs["tax_analysis"]
-
-            # Normalize and extract clean text from object, list, or raw string
-            raw_text = analysis.get("analysis", "")
-            if hasattr(raw_text, "text"):  # LangChain-style TextBlock
-                raw_text = raw_text.text
-            elif isinstance(raw_text, list):  # If it’s a list of strings
-                raw_text = " ".join(str(item) for item in raw_text)
-            else:
-                raw_text = str(raw_text)
-
-            # Final formatting
-            formatted_text = raw_text.replace("TextBlock(citations=None, text=", "").rstrip(")\"")
-
-            # Display in styled card
-            st.markdown(f"""
-                <div class='agent-response' style='background-color: #f1f7ff; padding: 1rem; border-left: 4px solid #3366CC; border-radius: 8px; margin-top: 1rem;'>
-                    <h4 style='color:#3366CC; margin-bottom: 0.5rem;'>Tax Situation Analysis</h4>
-                    <p style='color:#333333; line-height: 1.6;'>{formatted_text}</p>
-                </div>
-            """, unsafe_allow_html=True)
-
-
-        
-        # Tax estimator
-        st.markdown("### Tax Liability Estimator")
-        
-        with st.form("tax_estimator_form"):
-            col1, col2 = st.columns(2)
-            
-            # Prefill with annual income
-            annual_income = total_income * 12
-            
-            with col1:
-                est_income = st.number_input("Annual Income", min_value=0.0, value=annual_income, step=5000.0)
-                est_filing_status = st.selectbox("Filing Status", 
-                                                ["single", "married", "married_filing_separately", "head_of_household"],
-                                                index=["single", "married", "married_filing_separately", "head_of_household"].index(filing_status))
-            
-            with col2:
-                est_deductions = st.number_input("Estimated Deductions", min_value=0.0, value=12950.0, step=1000.0)
-                est_credits = st.number_input("Estimated Tax Credits", min_value=0.0, value=dependents * 2000.0, step=1000.0)
-            
-            est_button = st.form_submit_button("Estimate Tax Liability")
-            
-            if est_button:
-                with st.spinner("Estimating tax liability..."):
-                    # Create simple income, deductions, and credits dicts
-                    income_data = {"wages": est_income}
-                    deductions_data = {"standard_deduction": est_deductions}
-                    credits_data = {"total_credits": est_credits}
-                    
-                    # Get tax estimate from tax agent
-                    tax_agent = agent_manager.get_agent("tax")
-                    tax_estimate = tax_agent.estimate_tax_liability(income_data, deductions_data, credits_data, est_filing_status)
-                    
-                    # Store in session state
-                    st.session_state.agent_outputs["tax_estimate"] = tax_estimate
-        
-        # Display tax estimate if available
-        if "tax_estimate" in st.session_state.agent_outputs:
-            estimate = st.session_state.agent_outputs["tax_estimate"]
-
-            # Normalize and format the text
-            raw_text = estimate.get("tax_estimate", "")
-            if hasattr(raw_text, "text"):
-                raw_text = raw_text.text
-            elif isinstance(raw_text, list):
-                raw_text = " ".join(map(str, raw_text))
-            else:
-                raw_text = str(raw_text)
-            formatted_text = format_llm_text(raw_text)
-
-            # Display in styled div
-            st.markdown("""
-                <div class='agent-response'>
-                    <h4 style='color:#3366CC;'>Tax Liability Estimate</h4>
-                    <p style='color:#333333;'>%s</p>
-                </div>
-            """ % formatted_text, unsafe_allow_html=True)
-
+            display_llm_response(analysis.get("analysis", ""), "Tax Situation Analysis")
     
     with tabs[1]:
         # Tax Planning
@@ -2626,26 +1873,8 @@ def show_tax_view(components):
         # Display tax planning if available
         if "tax_planning" in st.session_state.agent_outputs:
             planning = st.session_state.agent_outputs["tax_planning"]
-
             if planning["area"] == selected_area and planning["year"] == tax_year:
-                # Normalize and format the strategies content
-                raw_text = planning.get("strategies", "")
-                if hasattr(raw_text, "text"):
-                    raw_text = raw_text.text
-                elif isinstance(raw_text, list):
-                    raw_text = " ".join(map(str, raw_text))
-                else:
-                    raw_text = str(raw_text)
-                formatted_text = format_llm_text(raw_text)
-
-                # Display inside styled div
-                st.markdown(f"""
-                    <div class='agent-response'>
-                        <h4 style='color:#3366CC;'>{planning['area']} Strategies for {planning['year']}</h4>
-                        <p style='color:#333333;'>{formatted_text}</p>
-                    </div>
-                """, unsafe_allow_html=True)
-
+                display_llm_response(planning["strategies"], f"{planning['area']} Strategies for {planning['year']}")
     
     with tabs[2]:
         # Tax-Advantaged Accounts
@@ -2663,24 +1892,7 @@ def show_tax_view(components):
         # Display account recommendations if available
         if "account_recommendations" in st.session_state.agent_outputs:
             recommendations = st.session_state.agent_outputs["account_recommendations"]
-
-            # Normalize and format the text
-            raw_text = recommendations.get("recommendations", "")
-            if hasattr(raw_text, "text"):
-                raw_text = raw_text.text
-            elif isinstance(raw_text, list):
-                raw_text = " ".join(map(str, raw_text))
-            else:
-                raw_text = str(raw_text)
-            formatted_text = format_llm_text(raw_text)
-
-            # Display inside styled container
-            st.markdown(f"""
-                <div class='agent-response'>
-                    <h4 style='color:#3366CC;'>Tax-Advantaged Account Recommendations</h4>
-                    <p style='color:#333333;'>{formatted_text}</p>
-                </div>
-            """, unsafe_allow_html=True)
+            display_llm_response(recommendations.get("recommendations", ""), "Tax-Advantaged Account Recommendations")
 
         # Account comparison
         st.markdown("### Account Type Comparison")
@@ -2714,25 +1926,7 @@ def show_tax_view(components):
         # Display comparison if available
         if "account_comparison" in st.session_state.agent_outputs:
             comparison = st.session_state.agent_outputs["account_comparison"]
-
-            # Only show if it matches the current selection
-            if comparison["comparison"] == selected_comparison:
-                # Normalize and format the explanation text
-                raw_text = comparison.get("explanation", "")
-                if hasattr(raw_text, "text"):
-                    raw_text = raw_text.text
-                elif isinstance(raw_text, list):
-                    raw_text = " ".join(map(str, raw_text))
-                else:
-                    raw_text = str(raw_text)
-                formatted_text = format_llm_text(raw_text)
-
-                st.markdown(f"""
-                    <div class='agent-response'>
-                        <h4 style='color:#3366CC;'>Comparison: {comparison['comparison']}</h4>
-                        <p style='color:#333333;'>{formatted_text}</p>
-                    </div>
-                """, unsafe_allow_html=True)
+            display_llm_response(comparison.get("explanation", ""), "Account Type Comparison")
 
     
     with tabs[3]:
@@ -2774,23 +1968,7 @@ def show_tax_view(components):
         # Display tax implications if available
         if "tax_implications" in st.session_state.agent_outputs:
             implications = st.session_state.agent_outputs["tax_implications"]
-
-            # Normalize and format the explanation text
-            raw_text = implications.get("tax_analysis", "")
-            if hasattr(raw_text, "text"):
-                raw_text = raw_text.text
-            elif isinstance(raw_text, list):
-                raw_text = " ".join(map(str, raw_text))
-            else:
-                raw_text = str(raw_text)
-            formatted_text = format_llm_text(raw_text)
-
-            st.markdown(f"""
-                <div class='agent-response'>
-                    <h4 style='color:#3366CC;'>Tax Implications Analysis</h4>
-                    <p style='color:#333333;'>{formatted_text}</p>
-                </div>
-            """, unsafe_allow_html=True)
+            display_llm_response(implications.get("tax_analysis", ""), "Tax Implications Analysis")
 
         
         # Tax calendar
@@ -2810,13 +1988,86 @@ def show_tax_view(components):
         tax_calendar_df = pd.DataFrame(tax_events)
         st.table(tax_calendar_df)
 
+def format_chat_message(content: str, is_user: bool = False) -> str:
+    """Format a chat message with proper styling."""
+    if is_user:
+        return f"""
+        <div style='
+            background-color: #f0f2f6;
+            padding: 15px;
+            border-radius: 15px;
+            margin: 10px 0;
+            border-bottom-right-radius: 5px;
+            max-width: 80%;
+            margin-left: auto;
+        '>
+            <p style='color: #444; margin: 0;'>{content}</p>
+        </div>
+        """
+    else:
+        # For assistant messages, use a different style
+        return f"""
+        <div style='
+            background-color: #f8f9fa;
+            border-left: 4px solid #3366CC;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 10px 0;
+            max-width: 90%;
+        '>
+            <p style='color: #333; margin: 0; line-height: 1.6;'>{format_llm_text(content)}</p>
+        </div>
+        """
+
+def format_llm_text(content: str) -> str:
+    """Format LLM text content with proper styling."""
+    # Clean up TextBlock wrapper if present
+    import re
+    if hasattr(content, "text"):
+        content = content.text
+    elif isinstance(content, list):
+        content = " ".join(map(str, content))
+    
+    text = str(content)
+    match = re.search(r"text=['\"](.*?)['\"]\)?$", text, re.DOTALL)
+    if match:
+        text = match.group(1)
+    
+    # Format numbered sections and headers
+    text = re.sub(r'(\d+\.)', r'\n**\1**', text)
+    text = re.sub(r'([A-Za-z\s]+):(\s*\n|\s+)', r'\n**\1:**', text)
+    
+    # Clean up newlines
+    text = text.replace("\\n", "\n")
+    text = text.replace("\n\n", "\n")
+    
+    return text
+
+def display_chat_message(role: str, content: str) -> None:
+    """Display a chat message with emoji style."""
+    if role == "user":
+        st.write('👤 **You**: ' + content)
+    else:
+        # Format the LLM text content but keep chat style
+        formatted_content = format_llm_text(content)
+        st.write('🤖 **AI**: ' + formatted_content)
+
+def format_expert_message(agent_type: str, response: str) -> str:
+    """Format an expert agent message for chat display."""
+    formatted_text = format_llm_text(response)
+    return f"**{agent_type.title()} Expert** 👨‍💼\n{formatted_text}"
+
+def format_consensus_message(response: str) -> str:
+    """Format a consensus message for chat display."""
+    formatted_text = format_llm_text(response)
+    return f"**Expert Consensus** 🤝\n{formatted_text}"
+
 def show_advisor_view(components):
     """Show the AI financial advisor chat view."""
-    st.markdown("<h2 class='sub-header'>AI Financial Advisor</h2>", unsafe_allow_html=True)
+    st.markdown("## 💬 AI Financial Advisor")
     
     # Get components
     agent_manager = components["agent_manager"]
-    llm_utils = components["llm_utils"]
     
     # Initialize chat history if needed
     if "chat_history" not in st.session_state:
@@ -2826,22 +2077,22 @@ def show_advisor_view(components):
     user_data = st.session_state.user_data
     
     # Display multi-agent selection
-    with st.expander("Configure Advisor Options"):
+    with st.expander("⚙️ Configure Advisor Options"):
         st.markdown("#### Select Financial Experts")
         
         # Agent selection
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            budget_selected = st.checkbox("Budget Expert", value="budget" in st.session_state.selected_agents)
-            investment_selected = st.checkbox("Investment Expert", value="investment" in st.session_state.selected_agents)
+            budget_selected = st.checkbox("💰 Budget Expert", value="budget" in st.session_state.selected_agents)
+            investment_selected = st.checkbox("📈 Investment Expert", value="investment" in st.session_state.selected_agents)
         
         with col2:
-            debt_selected = st.checkbox("Debt Expert", value="debt" in st.session_state.selected_agents)
-            savings_selected = st.checkbox("Savings Expert", value="savings" in st.session_state.selected_agents)
+            debt_selected = st.checkbox("💳 Debt Expert", value="debt" in st.session_state.selected_agents)
+            savings_selected = st.checkbox("🏦 Savings Expert", value="savings" in st.session_state.selected_agents)
         
         with col3:
-            tax_selected = st.checkbox("Tax Expert", value="tax" in st.session_state.selected_agents)
+            tax_selected = st.checkbox("📊 Tax Expert", value="tax" in st.session_state.selected_agents)
         
         # Update selected agents
         selected_agents = []
@@ -2857,72 +2108,58 @@ def show_advisor_view(components):
         advisor_mode = st.radio("Advisor Mode", ["Consensus", "Debate"], index=0)
         
         if advisor_mode == "Debate":
-            st.info("In debate mode, each expert will provide their own perspective on your question.")
+            st.info("💭 In debate mode, each expert will provide their own perspective on your question.")
         else:
-            st.info("In consensus mode, the experts will collaborate to provide a unified response.")
+            st.info("🤝 In consensus mode, the experts will collaborate to provide a unified response.")
     
-    # Chat interface
-    for message in st.session_state.chat_history:
-        role = message["role"]
-        content = message["content"]
-        
-        if role == "user":
-            st.chat_message("user").write(content)
-        else:
-            st.chat_message("assistant").write(content)
+    # Create a container for the chat history
+    chat_container = st.container()
     
     # Chat input
     user_query = st.chat_input("Ask your financial question here...")
     
+    # Display chat history
+    with chat_container:
+        for message in st.session_state.chat_history:
+            display_chat_message(message["role"], message["content"])
+    
     if user_query:
-        # Add user message to chat history
+        # Display user message
+        display_chat_message("user", user_query)
         st.session_state.chat_history.append({"role": "user", "content": user_query})
         
-        # Display user message
-        st.chat_message("user").write(user_query)
-        
-        # Display thinking message
-        with st.chat_message("assistant"):
-            if advisor_mode == "Consensus":
-                response_placeholder = st.empty()
-                response_placeholder.markdown("Thinking...")
+        if advisor_mode == "Consensus":
+            # Get holistic advice
+            with st.spinner("🤔 Getting expert financial advice..."):
+                response = agent_manager.get_holistic_advice(user_data, user_query)
+                formatted_response = format_consensus_message(response.get("consensus", ""))
                 
-                # Get holistic advice from agent manager
-                with st.spinner("Getting expert financial advice..."):
-                    agent_manager = components["agent_manager"]
-                    response = agent_manager.get_holistic_advice(user_data, user_query)
-                    
-                    # Update response
-                    response_placeholder.markdown(response["consensus"])
-                    
-                    # Add to chat history
-                    st.session_state.chat_history.append({"role": "assistant", "content": response["consensus"]})
-            else:  # Debate mode
-                # Show responses from each selected agent
-                st.markdown("### Expert Perspectives")
-                
-                responses = {}
-                
-                for agent_type in st.session_state.selected_agents:
-                    response_placeholder = st.empty()
-                    response_placeholder.markdown(f"*{agent_type.capitalize()} Expert is thinking...*")
-                    
-                    # Get response from specific agent
-                    with st.spinner(f"Getting advice from {agent_type} expert..."):
-                        agent = agent_manager.get_agent(agent_type)
-                        response = agent.chat_response(user_query, user_data, st.session_state.chat_history)
-                        responses[agent_type] = response
-                        
-                        # Update response
-                        response_placeholder.markdown(f"**{agent_type.capitalize()} Expert:**\n\n{response}")
-                
-                # Format combined response for chat history
-                combined_response = "**Expert Perspectives:**\n\n"
-                for agent_type, response in responses.items():
-                    combined_response += f"**{agent_type.capitalize()} Expert:**\n{response}\n\n"
-                
-                # Add to chat history
-                st.session_state.chat_history.append({"role": "assistant", "content": combined_response})
+                # Display and store response
+                display_chat_message("assistant", formatted_response)
+                st.session_state.chat_history.append({
+                    "role": "assistant",
+                    "content": formatted_response
+                })
+        else:  # Debate mode
+            responses = []
+            
+            # Get responses from each expert
+            for agent_type in st.session_state.selected_agents:
+                with st.spinner(f"💭 Getting advice from {agent_type} expert..."):
+                    agent = agent_manager.get_agent(agent_type)
+                    response = agent.chat_response(user_query, user_data, st.session_state.chat_history)
+                    formatted_response = format_expert_message(agent_type, response)
+                    responses.append(formatted_response)
+            
+            # Display combined response
+            combined_response = "\n\n".join(responses)
+            display_chat_message("assistant", combined_response)
+            
+            # Store in chat history
+            st.session_state.chat_history.append({
+                "role": "assistant",
+                "content": combined_response
+            })
 
 # Run the application
 if __name__ == "__main__":

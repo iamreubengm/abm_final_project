@@ -1,26 +1,14 @@
-# Core
-streamlit
-python-dotenv
+# Core Dependencies
+streamlit>=1.28.0
+python-dotenv>=1.0.0
+pathlib>=1.0.1
 
-# Data handling
-pandas
-numpy
+# Data Processing & Visualization
+pandas>=2.1.0
+numpy>=1.24.0
+plotly>=5.18.0
 
-# Visualization
-plotly
-
-# Anthropic API
-anthropic
-
-# RAG & Embeddings
-faiss-cpu
-sentence-transformers
-
-# LangChain (core & integrations)
-langchain
-langchain-community
-langchain-huggingface
-
-# Validation
-pydantic
-jsonschema
+# AI & Machine Learning
+anthropic>=0.3.0
+faiss-cpu>=1.7.4
+sentence-transformers>=2.2.2

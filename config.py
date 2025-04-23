@@ -30,7 +30,6 @@ VECTOR_DB_PATH = "data/vector_db"
 FINANCIAL_KB_PATH = "data/financial_kb"
 USER_DATA_PATH = "data/user_data"
 SYSTEM_PROMPTS_PATH = "prompts/system_prompts"
-PROMPT_TEMPLATES_PATH = "prompts/templates"
 
 # Streamlit configuration
 STREAMLIT_PAGE_TITLE = "AI Personal Financial Portal"
