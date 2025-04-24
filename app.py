@@ -2029,19 +2029,51 @@ def format_llm_text(content: str) -> str:
         content = " ".join(map(str, content))
     
     text = str(content)
+    
+    # Extract text from TextBlock if present
     match = re.search(r"text=['\"](.*?)['\"]\)?$", text, re.DOTALL)
     if match:
         text = match.group(1)
+    elif "TextBlock" in text:
+        # Alternative pattern
+        match = re.search(r'text\s*=\s*["\'](.+?)["\']', text, re.DOTALL)
+        if match:
+            text = match.group(1)
     
-    # Format numbered sections and headers
-    text = re.sub(r'(\d+\.)', r'\n**\1**', text)
-    text = re.sub(r'([A-Za-z\s]+):(\s*\n|\s+)', r'\n**\1:**', text)
+    # Remove all asterisks completely
+    text = text.replace('*', '')
+    text = text.replace('**', '')
     
-    # Clean up newlines
-    text = text.replace("\\n", "\n")
+    # Also remove any ', type='text' trailing part
+    text = re.sub(r', type=\'text\'', '', text)
+    text = re.sub(r', type="text"', '', text)
+    
+    # Fix run-together words by adding spaces
+    text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)  # Split camelCase
+    text = re.sub(r'(\d)([A-Za-z])', r'\1 \2', text)  # Add space between numbers and text
+    
+    # Clean up escape characters
+    text = text.replace('\\n', '\n')
+    text = text.replace('â¢', '•')
+    text = text.replace('â', '-')
+    text = text.replace('−', '-')
+    
+    # Format numbered sections and headers - using different formatting since we removed asterisks
+    text = re.sub(r'(\d+\.)', r'\n\1', text)
+    text = re.sub(r'([A-Za-z\s]+):(\s*\n|\s+)', r'\n\1:', text)
+    
+    # Add spaces after punctuation
+    text = re.sub(r'([.,!?:;])([^\s])', r'\1 \2', text)
+    
+    # Clean up newlines and spaces
+    text = ' '.join(text.split())
     text = text.replace("\n\n", "\n")
     
-    return text
+    # Format bullet points and lists
+    text = text.replace('• ', '\n• ')
+    text = re.sub(r'(\d+\.) ', r'\n\1 ', text)
+    
+    return text.strip()
 
 def display_chat_message(role: str, content: str) -> None:
     """Display a chat message with emoji style."""
