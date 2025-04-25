@@ -231,6 +231,9 @@ def render_expenses_section(user_data):
     total_expenses = calculate_total_expenses(user_data["expenses"])
     st.metric("Total Monthly Expenses", format_currency(total_expenses))
     
+    # Calculate total income before updating cashflow
+    total_income = calculate_total_income(user_data["income"])
+    
     # Update cashflow in user data
     user_data["monthly_cashflow"]["total_income"] = total_income
     user_data["monthly_cashflow"]["total_expenses"] = total_expenses

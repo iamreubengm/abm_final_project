@@ -6,6 +6,7 @@ import re
 import plotly.graph_objs as go
 import pandas as pd
 from typing import List, Tuple, Optional, Dict, Any
+from datetime import datetime
 
 def display_header(title, level=1):
     """Display a header with consistent styling."""
@@ -249,4 +250,45 @@ def format_percentage(value: float) -> str:
     Returns:
         Formatted percentage string
     """
-    return f"{value:.1f}%" 
+    return f"{value:.1f}%"
+
+def display_feedback_ui(advice: str, on_feedback_submit: callable) -> None:
+    """Display feedback UI components for user to rate and comment on advice.
+    
+    Args:
+        advice: The financial advice to get feedback on
+        on_feedback_submit: Callback function to handle feedback submission
+    """
+    st.markdown("### How helpful was this advice?")
+    
+    # Rating selection
+    rating = st.radio(
+        "Rate this advice:",
+        options=[1, 2, 3, 4, 5],
+        format_func=lambda x: {
+            1: "Not helpful at all",
+            2: "Slightly helpful",
+            3: "Moderately helpful",
+            4: "Very helpful",
+            5: "Extremely helpful"
+        }[x],
+        horizontal=True,
+        key=f"feedback_rating_{hash(advice)}"
+    )
+    
+    # Comment input
+    comment = st.text_area(
+        "Would you like to add any comments on how this advice could be improved?",
+        height=100,
+        key=f"feedback_comment_{hash(advice)}"
+    )
+    
+    # Submit button
+    if st.button("Submit Feedback", key=f"feedback_submit_{hash(advice)}"):
+        feedback = {
+            "rating": rating,
+            "comment": comment if comment else None,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        on_feedback_submit(feedback)
+        st.success("Thank you for your feedback!") 

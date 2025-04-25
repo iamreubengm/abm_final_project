@@ -27,7 +27,8 @@ from ui.components import (
     create_tabs,
     create_columns,
     format_currency,
-    format_percentage
+    format_percentage,
+    display_feedback_ui
 )
 
 # Import utility functions
@@ -61,6 +62,7 @@ from utils.data_loader import DataLoader
 from utils.visualization import FinancialVisualizer
 from utils.rag_utils import FinancialRAG
 from utils.llm_utils import LLMUtils
+from utils.feedback_manager import FeedbackManager
 from config import get_anthropic_client, STREAMLIT_PAGE_TITLE, STREAMLIT_PAGE_ICON, STREAMLIT_LAYOUT
 
 # Import UI modules
@@ -147,7 +149,7 @@ def format_llm_output(raw_output):
     
     # Clean up TextBlock wrapper if present
     import re
-    match = re.search(r"text=['\"](.*?)['\"]\)?$", text, re.DOTALL)
+    match = re.search(r"text=['\"](.*?)['\"](.*?)['\"]\)?$", text, re.DOTALL)
     if match:
         text = match.group(1)
     
@@ -248,25 +250,86 @@ def show_dashboard_view(components):
     # Charts Section
     st.markdown("<h3>Financial Charts</h3>", unsafe_allow_html=True)
     
-    # Create tabs
-    tabs = create_tabs(["Budget Breakdown", "Net Worth", "Asset Allocation"])
+    # Create tabs - only three tabs
+    tabs = create_tabs(["Budget Overview", "Income & Expenses", "Investments"])
     
     with tabs[0]:
-        # Budget breakdown chart
+        # Budget Overview tab
+        st.markdown("### Budget Breakdown")
         budget_chart = visualizer.create_budget_chart(user_data)
-        display_chart(budget_chart, key="dashboard_tab1_budget_chart")
+        display_chart(budget_chart, key="dashboard_budget_chart")
+        
+        # Display quick stats
+        col1, col2 = st.columns(2)
+        with col1:
+            total_income = calculate_total_income(user_data["income"])
+            st.metric("Monthly Income", format_currency(total_income))
+        with col2:
+            total_expenses = calculate_total_expenses(user_data["expenses"])
+            st.metric("Monthly Expenses", format_currency(total_expenses))
+        
+        # Spending Optimization
+        st.markdown("### Spending Optimization")
+        if st.button("Find Savings Opportunities", key="find_savings_opportunities_btn"):
+            with st.spinner("Analyzing expenses for savings opportunities..."):
+                budget_agent = agent_manager.get_agent("budget")
+                savings_opps = budget_agent.identify_savings_opportunities(user_data["expenses"])
+                st.session_state.agent_outputs["savings_opportunities"] = savings_opps
+        
+        # Display savings opportunities if available
+        if "savings_opportunities" in st.session_state.agent_outputs:
+            opps = st.session_state.agent_outputs["savings_opportunities"]
+            display_llm_response(opps.get("opportunities", ""), "Savings Opportunities")
     
     with tabs[1]:
+        # Income & Expenses tab
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Income Analysis
+            st.markdown("### Income Sources")
+            income_data = [{"Source": source, "Amount": amount} 
+                          for source, amount in user_data["income"].items()]
+            income_df = pd.DataFrame(income_data)
+            income_df["Percentage"] = income_df["Amount"] / income_df["Amount"].sum() * 100
+            
+            # Format for display
+            income_display = income_df.copy()
+            income_display["Amount"] = income_display["Amount"].apply(lambda x: format_currency(x))
+            income_display["Percentage"] = income_display["Percentage"].apply(lambda x: format_percentage(x))
+            display_dataframe(income_display, key="income_sources_table")
+        
+        with col2:
+            # Expense Analysis
+            st.markdown("### Expense Categories")
+            expense_data = [{"Category": category, "Amount": amount} 
+                           for category, amount in user_data["expenses"].items()]
+            expense_df = pd.DataFrame(expense_data)
+            expense_df["Percentage"] = expense_df["Amount"] / expense_df["Amount"].sum() * 100
+            
+            # Format for display
+            expense_display = expense_df.copy()
+            expense_display["Amount"] = expense_display["Amount"].apply(lambda x: format_currency(x))
+            expense_display["Percentage"] = expense_display["Percentage"].apply(lambda x: format_percentage(x))
+            display_dataframe(expense_display, key="expense_categories_table")
+        
+        # Income vs Expenses Trend
+        st.markdown("### Income vs Expenses Trend")
         demo_monthly_data = visualizer.generate_demo_monthly_data(12)
         income_expense_chart = visualizer.create_income_expense_trend_chart(demo_monthly_data)
-        display_chart(income_expense_chart, key="dashboard_tab1_income_expense_chart")
+        display_chart(income_expense_chart, key="income_expense_trend_chart")
+        
+        # Expense Distribution
+        st.markdown("### Expense Distribution")
+        expense_pie = visualizer.create_expense_pie_chart(user_data["expenses"])
+        display_chart(expense_pie, key="expense_distribution_chart")
     
     with tabs[2]:
-        # Asset allocation chart
+        # Investments tab
+        st.markdown("### Asset Allocation")
         if st.session_state.portfolio_data["holdings"]:
             portfolio = st.session_state.portfolio_data
         else:
-            # Create placeholder portfolio data
             portfolio = {
                 "asset_allocation": {
                     "Stocks": 60,
@@ -277,436 +340,84 @@ def show_dashboard_view(components):
             }
         
         allocation_chart = visualizer.create_investment_allocation_chart(portfolio)
-        display_chart(allocation_chart, key="dashboard_tab3_allocation_chart")
+        display_chart(allocation_chart, key="asset_allocation_chart")
     
     # AI Insights Section
     st.markdown("<h3>AI Financial Insights</h3>", unsafe_allow_html=True)
     
-    if st.button("Generate Financial Insights"):
-        with st.spinner("Analyzing your financial data..."):
-            # Get holistic advice from agent manager
-            insights = agent_manager.get_holistic_advice(user_data, "Provide key financial insights")
-            
-            # Store in session state
-            st.session_state.agent_outputs["dashboard_insights"] = insights
+    # Initialize feedback manager if not already done
+    if "feedback_manager" not in st.session_state:
+        st.session_state.feedback_manager = FeedbackManager()
     
-    # Display insights if available
-    if "dashboard_insights" in st.session_state.agent_outputs:
-        insights = st.session_state.agent_outputs["dashboard_insights"]
-        display_llm_response(insights.get("consensus", ""), "Key Financial Insights")
-
-def show_profile_view(components):
-    """Show the financial profile view for data entry."""
-    st.markdown("<h2 class='sub-header'>Financial Profile</h2>", unsafe_allow_html=True)
+    # Button to refresh insights
+    if st.button("Generate New Insights", key="generate_new_insights_btn"):
+        st.session_state.pop("insights", None)
+        st.session_state.pop("insight_feedback", None)  # Clear feedback when refreshing
+        st.rerun()
     
-    # Create tabs for different profile sections
-    tabs = st.tabs(["Personal Info", "Income", "Expenses", "Debts", "Investments", "Savings", "Goals"])
-    
-    user_data = st.session_state.user_data
-    
-    with tabs[0]:
-        st.subheader("Personal Information")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            user_data["personal"]["name"] = st.text_input("Name", value=user_data["personal"].get("name", ""))
-            user_data["personal"]["age"] = st.number_input("Age", min_value=18, max_value=100, value=user_data["personal"].get("age", 30))
-        
-        with col2:
-            user_data["personal"]["filing_status"] = st.selectbox(
-                "Filing Status", 
-                ["single", "married", "married_filing_separately", "head_of_household"],
-                index=["single", "married", "married_filing_separately", "head_of_household"].index(user_data["personal"].get("filing_status", "single"))
-            )
-            user_data["personal"]["dependents"] = st.number_input("Number of Dependents", min_value=0, max_value=10, value=user_data["personal"].get("dependents", 0))
-        
-        st.subheader("Location")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            user_data["personal"]["location"]["country"] = st.selectbox(
-                "Country", 
-                ["US", "Canada", "UK", "Australia", "Other"],
-                index=["US", "Canada", "UK", "Australia", "Other"].index(user_data["personal"]["location"].get("country", "US"))
-            )
-        
-        with col2:
-            user_data["personal"]["location"]["state"] = st.text_input("State/Province", value=user_data["personal"]["location"].get("state", ""))
-    
-    with tabs[1]:
-        st.subheader("Income Sources")
-        
-        # Helper function to create income input
-        def income_input(label, key):
-            return st.number_input(
-                label, 
-                min_value=0.0, 
-                value=float(user_data["income"].get(key, 0)),
-                step=100.0,
-                format="%0.2f"
-            )
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            user_data["income"]["salary"] = income_input("Salary (Monthly)", "salary")
-            user_data["income"]["self_employment"] = income_input("Self-Employment (Monthly)", "self_employment")
-        
-        with col2:
-            user_data["income"]["investments"] = income_input("Investment Income (Monthly)", "investments")
-            user_data["income"]["other"] = income_input("Other Income (Monthly)", "other")
-        
-        # Calculate and display total
-        total_income = sum(user_data["income"].values())
-        st.metric("Total Monthly Income", f"${total_income:,.2f}")
-    
-    with tabs[2]:
-        st.subheader("Monthly Expenses")
-        
-        # Helper function to create expense input
-        def expense_input(label, key):
-            return st.number_input(
-                label, 
-                min_value=0.0, 
-                value=float(user_data["expenses"].get(key, 0)),
-                step=10.0,
-                format="%0.2f"
-            )
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            user_data["expenses"]["housing"] = expense_input("Housing", "housing")
-            user_data["expenses"]["transportation"] = expense_input("Transportation", "transportation")
-            user_data["expenses"]["food"] = expense_input("Food", "food")
-            user_data["expenses"]["utilities"] = expense_input("Utilities", "utilities")
-        
-        with col2:
-            user_data["expenses"]["insurance"] = expense_input("Insurance", "insurance")
-            user_data["expenses"]["healthcare"] = expense_input("Healthcare", "healthcare")
-            user_data["expenses"]["personal"] = expense_input("Personal", "personal")
-            user_data["expenses"]["entertainment"] = expense_input("Entertainment", "entertainment")
-        
-        user_data["expenses"]["other"] = expense_input("Other Expenses", "other")
-        
-        # Calculate and display total
-        total_expenses = sum(user_data["expenses"].values())
-        st.metric("Total Monthly Expenses", f"${total_expenses:,.2f}")
-        
-        # Update cashflow in user data
-        user_data["monthly_cashflow"]["total_income"] = total_income
-        user_data["monthly_cashflow"]["total_expenses"] = total_expenses
-        user_data["monthly_cashflow"]["surplus_deficit"] = total_income - total_expenses
-    
-    with tabs[3]:
-        st.subheader("Debts")
-        
-        # Credit Cards
-        st.markdown("#### Credit Cards")
-        for i, card in enumerate(user_data["debts"].get("credit_cards", [])):
-            cols = st.columns([3, 2, 2, 2, 1])
-            with cols[0]:
-                user_data["debts"]["credit_cards"][i]["name"] = st.text_input(f"Card Name {i+1}", value=card.get("name", ""), key=f"cc_name_{i}")
-            with cols[1]:
-                user_data["debts"]["credit_cards"][i]["balance"] = st.number_input(f"Balance {i+1}", min_value=0.0, value=float(card.get("balance", 0)), step=100.0, format="%0.2f", key=f"cc_bal_{i}")
-            with cols[2]:
-                user_data["debts"]["credit_cards"][i]["interest_rate"] = st.number_input(f"Interest Rate {i+1} (%)", min_value=0.0, max_value=30.0, value=float(card.get("interest_rate", 0)), step=0.5, format="%0.2f", key=f"cc_rate_{i}")
-            with cols[3]:
-                user_data["debts"]["credit_cards"][i]["minimum_payment"] = st.number_input(f"Min Payment {i+1}", min_value=0.0, value=float(card.get("minimum_payment", 0)), step=10.0, format="%0.2f", key=f"cc_min_{i}")
-            with cols[4]:
-                if st.button("🗑️", key=f"del_cc_{i}"):
-                    user_data["debts"]["credit_cards"].pop(i)
-                    st.rerun()
-        
-        if st.button("Add Credit Card"):
-            if "credit_cards" not in user_data["debts"]:
-                user_data["debts"]["credit_cards"] = []
-            user_data["debts"]["credit_cards"].append({"name": "", "balance": 0, "interest_rate": 0, "minimum_payment": 0})
-            st.rerun()
-        
-        # Student Loans
-        st.markdown("#### Student Loans")
-        for i, loan in enumerate(user_data["debts"].get("student_loans", [])):
-            cols = st.columns([3, 2, 2, 2, 1])
-            with cols[0]:
-                user_data["debts"]["student_loans"][i]["name"] = st.text_input(f"Loan Name {i+1}", value=loan.get("name", ""), key=f"sl_name_{i}")
-            with cols[1]:
-                user_data["debts"]["student_loans"][i]["balance"] = st.number_input(f"Balance {i+1}", min_value=0.0, value=float(loan.get("balance", 0)), step=100.0, format="%0.2f", key=f"sl_bal_{i}")
-            with cols[2]:
-                user_data["debts"]["student_loans"][i]["interest_rate"] = st.number_input(f"Interest Rate {i+1} (%)", min_value=0.0, max_value=15.0, value=float(loan.get("interest_rate", 0)), step=0.25, format="%0.2f", key=f"sl_rate_{i}")
-            with cols[3]:
-                user_data["debts"]["student_loans"][i]["minimum_payment"] = st.number_input(f"Min Payment {i+1}", min_value=0.0, value=float(loan.get("minimum_payment", 0)), step=10.0, format="%0.2f", key=f"sl_min_{i}")
-            with cols[4]:
-                if st.button("🗑️", key=f"del_sl_{i}"):
-                    user_data["debts"]["student_loans"].pop(i)
-                    st.rerun()
-        
-        if st.button("Add Student Loan"):
-            if "student_loans" not in user_data["debts"]:
-                user_data["debts"]["student_loans"] = []
-            user_data["debts"]["student_loans"].append({"name": "", "balance": 0, "interest_rate": 0, "minimum_payment": 0})
-            st.rerun()
-        
-        # Mortgage
-        st.markdown("#### Mortgage")
-        for i, loan in enumerate(user_data["debts"].get("mortgage", [])):
-            cols = st.columns([3, 2, 2, 2, 1])
-            with cols[0]:
-                user_data["debts"]["mortgage"][i]["name"] = st.text_input(f"Property {i+1}", value=loan.get("name", ""), key=f"m_name_{i}")
-            with cols[1]:
-                user_data["debts"]["mortgage"][i]["balance"] = st.number_input(f"Balance {i+1}", min_value=0.0, value=float(loan.get("balance", 0)), step=1000.0, format="%0.2f", key=f"m_bal_{i}")
-            with cols[2]:
-                user_data["debts"]["mortgage"][i]["interest_rate"] = st.number_input(f"Interest Rate {i+1} (%)", min_value=0.0, max_value=10.0, value=float(loan.get("interest_rate", 0)), step=0.125, format="%0.2f", key=f"m_rate_{i}")
-            with cols[3]:
-                user_data["debts"]["mortgage"][i]["minimum_payment"] = st.number_input(f"Payment {i+1}", min_value=0.0, value=float(loan.get("minimum_payment", 0)), step=100.0, format="%0.2f", key=f"m_min_{i}")
-            with cols[4]:
-                if st.button("🗑️", key=f"del_m_{i}"):
-                    user_data["debts"]["mortgage"].pop(i)
-                    st.rerun()
-        
-        if st.button("Add Mortgage"):
-            if "mortgage" not in user_data["debts"]:
-                user_data["debts"]["mortgage"] = []
-            user_data["debts"]["mortgage"].append({"name": "", "balance": 0, "interest_rate": 0, "minimum_payment": 0})
-            st.rerun()
-    
-    with tabs[4]:
-        st.subheader("Investments")
-        
-        # Retirement Accounts
-        st.markdown("#### Retirement Accounts")
-        for i, account in enumerate(user_data["investments"].get("retirement_accounts", [])):
-            cols = st.columns([3, 2, 2, 2, 1])
-            with cols[0]:
-                user_data["investments"]["retirement_accounts"][i]["name"] = st.text_input(f"Account {i+1}", value=account.get("name", ""), key=f"ra_name_{i}")
-            with cols[1]:
-                user_data["investments"]["retirement_accounts"][i]["balance"] = st.number_input(f"Balance {i+1}", min_value=0.0, value=float(account.get("balance", 0)), step=1000.0, format="%0.2f", key=f"ra_bal_{i}")
-            with cols[2]:
-                user_data["investments"]["retirement_accounts"][i]["contribution_rate"] = st.number_input(f"Contribution % {i+1}", min_value=0.0, max_value=100.0, value=float(account.get("contribution_rate", 0)), step=1.0, format="%0.2f", key=f"ra_cont_{i}")
-            with cols[3]:
-                # Simplified asset allocation as a single stock percentage
-                stock_percent = account.get("asset_allocation", {}).get("stocks", 0)
-                stock_percent = st.number_input(f"Stock % {i+1}", min_value=0.0, max_value=100.0, value=float(stock_percent), step=5.0, format="%0.2f", key=f"ra_stock_{i}")
-                user_data["investments"]["retirement_accounts"][i]["asset_allocation"] = {"stocks": stock_percent, "bonds": 100 - stock_percent}
-            with cols[4]:
-                if st.button("🗑️", key=f"del_ra_{i}"):
-                    user_data["investments"]["retirement_accounts"].pop(i)
-                    st.rerun()
-        
-        if st.button("Add Retirement Account"):
-            if "retirement_accounts" not in user_data["investments"]:
-                user_data["investments"]["retirement_accounts"] = []
-            user_data["investments"]["retirement_accounts"].append({"name": "", "balance": 0, "contribution_rate": 0, "asset_allocation": {"stocks": 0, "bonds": 0}})
-            st.rerun()
-        
-        # Brokerage Accounts
-        st.markdown("#### Brokerage Accounts")
-        for i, account in enumerate(user_data["investments"].get("brokerage_accounts", [])):
-            cols = st.columns([4, 3, 2, 1])
-            with cols[0]:
-                user_data["investments"]["brokerage_accounts"][i]["name"] = st.text_input(f"Account {i+1}", value=account.get("name", ""), key=f"ba_name_{i}")
-            with cols[1]:
-                user_data["investments"]["brokerage_accounts"][i]["balance"] = st.number_input(f"Balance {i+1}", min_value=0.0, value=float(account.get("balance", 0)), step=1000.0, format="%0.2f", key=f"ba_bal_{i}")
-            with cols[2]:
-                # Simplified asset allocation input
-                allocation = account.get("asset_allocation", {})
-                options = ["stocks", "bonds", "cash", "other"]
-                allocation_type = st.selectbox(f"Main Asset {i+1}", options, index=0, key=f"ba_type_{i}")
-                
-                # Initialize asset_allocation if not present
-                if "asset_allocation" not in user_data["investments"]["brokerage_accounts"][i]:
-                    user_data["investments"]["brokerage_accounts"][i]["asset_allocation"] = {}
-                
-                # Set the selected asset to 100% and others to 0%
-                for opt in options:
-                    user_data["investments"]["brokerage_accounts"][i]["asset_allocation"][opt] = 100 if opt == allocation_type else 0
-            
-            with cols[3]:
-                if st.button("🗑️", key=f"del_ba_{i}"):
-                    user_data["investments"]["brokerage_accounts"].pop(i)
-                    st.rerun()
-        
-        if st.button("Add Brokerage Account"):
-            if "brokerage_accounts" not in user_data["investments"]:
-                user_data["investments"]["brokerage_accounts"] = []
-            user_data["investments"]["brokerage_accounts"].append({"name": "", "balance": 0, "asset_allocation": {"stocks": 100, "bonds": 0, "cash": 0, "other": 0}})
-            st.rerun()
-    
-    with tabs[5]:
-        st.subheader("Savings")
-        
-        # Emergency Fund
-        st.markdown("#### Emergency Fund")
-        col1, col2 = st.columns(2)
-        with col1:
-            user_data["savings"]["emergency_fund"]["balance"] = st.number_input(
-                "Current Balance", 
-                min_value=0.0, 
-                value=float(user_data["savings"]["emergency_fund"].get("balance", 0)),
-                step=500.0,
-                format="%0.2f"
-            )
-        with col2:
-            user_data["savings"]["emergency_fund"]["target"] = st.number_input(
-                "Target Amount", 
-                min_value=0.0, 
-                value=float(user_data["savings"]["emergency_fund"].get("target", 0)),
-                step=500.0,
-                format="%0.2f"
-            )
-        
-        # Savings Accounts
-        st.markdown("#### Savings Accounts")
-        for i, account in enumerate(user_data["savings"].get("savings_accounts", [])):
-            cols = st.columns([3, 2, 2, 3, 1])
-            with cols[0]:
-                user_data["savings"]["savings_accounts"][i]["name"] = st.text_input(f"Account {i+1}", value=account.get("name", ""), key=f"sa_name_{i}")
-            with cols[1]:
-                user_data["savings"]["savings_accounts"][i]["balance"] = st.number_input(f"Balance {i+1}", min_value=0.0, value=float(account.get("balance", 0)), step=500.0, format="%0.2f", key=f"sa_bal_{i}")
-            with cols[2]:
-                user_data["savings"]["savings_accounts"][i]["interest_rate"] = st.number_input(f"Interest Rate {i+1} (%)", min_value=0.0, max_value=10.0, value=float(account.get("interest_rate", 0)), step=0.1, format="%0.2f", key=f"sa_int_{i}")
-            with cols[3]:
-                user_data["savings"]["savings_accounts"][i]["purpose"] = st.text_input(f"Purpose {i+1}", value=account.get("purpose", ""), key=f"sa_purp_{i}")
-            with cols[4]:
-                if st.button("🗑️", key=f"del_sa_{i}"):
-                    user_data["savings"]["savings_accounts"].pop(i)
-                    st.rerun()
-        
-        if st.button("Add Savings Account"):
-            if "savings_accounts" not in user_data["savings"]:
-                user_data["savings"]["savings_accounts"] = []
-            user_data["savings"]["savings_accounts"].append({"name": "", "balance": 0, "interest_rate": 0, "purpose": ""})
-            st.rerun()
-    
-    with tabs[6]:
-        st.subheader("Financial Goals")
-        
-        # Risk Tolerance
-        st.markdown("#### Risk Profile")
-        col1, col2 = st.columns(2)
-        with col1:
-            user_data["profile"]["risk_tolerance"] = st.select_slider(
-                "Risk Tolerance",
-                options=["conservative", "moderately_conservative", "moderate", "moderately_aggressive", "aggressive"],
-                value=user_data["profile"].get("risk_tolerance", "moderate")
-            )
-        with col2:
-            user_data["profile"]["time_horizon"] = st.select_slider(
-                "Time Horizon",
-                options=["short", "medium", "long"],
-                value=user_data["profile"].get("time_horizon", "medium")
-            )
-        
-        # Savings Goals
-        st.markdown("#### Savings Goals")
-        for i, goal in enumerate(user_data["savings"].get("savings_goals", [])):
-            cols = st.columns([3, 2, 2, 2, 1])
-            with cols[0]:
-                user_data["savings"]["savings_goals"][i]["name"] = st.text_input(f"Goal {i+1}", value=goal.get("name", ""), key=f"sg_name_{i}")
-            with cols[1]:
-                user_data["savings"]["savings_goals"][i]["target"] = st.number_input(f"Target {i+1}", min_value=0.0, value=float(goal.get("target", 0)), step=500.0, format="%0.2f", key=f"sg_targ_{i}")
-            with cols[2]:
-                user_data["savings"]["savings_goals"][i]["current"] = st.number_input(f"Current {i+1}", min_value=0.0, value=float(goal.get("current", 0)), step=100.0, format="%0.2f", key=f"sg_curr_{i}")
-            with cols[3]:
-                user_data["savings"]["savings_goals"][i]["deadline"] = st.date_input(f"Deadline {i+1}", value=datetime.strptime(goal.get("deadline", datetime.now().strftime("%Y-%m-%d")), "%Y-%m-%d"), key=f"sg_dead_{i}").strftime("%Y-%m-%d")
-            with cols[4]:
-                if st.button("🗑️", key=f"del_sg_{i}"):
-                    user_data["savings"]["savings_goals"].pop(i)
-                    st.rerun()
-        
-        if st.button("Add Savings Goal"):
-            if "savings_goals" not in user_data["savings"]:
-                user_data["savings"]["savings_goals"] = []
-            user_data["savings"]["savings_goals"].append({"name": "", "target": 0, "current": 0, "deadline": datetime.now().strftime("%Y-%m-%d")})
-            st.rerun()
-        
-        # Financial Goals
-        st.markdown("#### Long-term Financial Goals")
-        for i, goal in enumerate(user_data["profile"].get("financial_goals", [])):
-            cols = st.columns([4, 2, 2, 1])
-            with cols[0]:
-                user_data["profile"]["financial_goals"][i]["name"] = st.text_input(f"Goal {i+1}", value=goal.get("name", ""), key=f"fg_name_{i}")
-            with cols[1]:
-                user_data["profile"]["financial_goals"][i]["priority"] = st.selectbox(f"Priority {i+1}", ["low", "medium", "high"], index=["low", "medium", "high"].index(goal.get("priority", "medium")), key=f"fg_pri_{i}")
-            with cols[2]:
-                user_data["profile"]["financial_goals"][i]["timeline"] = st.selectbox(f"Timeline {i+1}", ["short", "medium", "long"], index=["short", "medium", "long"].index(goal.get("timeline", "medium")), key=f"fg_time_{i}")
-            with cols[3]:
-                if st.button("🗑️", key=f"del_fg_{i}"):
-                    user_data["profile"]["financial_goals"].pop(i)
-                    st.rerun()
-        
-        if st.button("Add Financial Goal"):
-            if "financial_goals" not in user_data["profile"]:
-                user_data["profile"]["financial_goals"] = []
-            user_data["profile"]["financial_goals"].append({"name": "", "priority": "medium", "timeline": "medium"})
-            st.rerun()
-    
-    # Update last modified timestamp
-    user_data["last_updated"] = datetime.now().isoformat()
-
-def show_budget_view(components):
-    """Show the budget manager view."""
-    st.markdown("<h2 class='sub-header'>Budget Manager</h2>", unsafe_allow_html=True)
-    
-    # Get components
-    agent_manager = components["agent_manager"]
-    visualizer = components["visualizer"]
-    data_loader = components["data_loader"]
-    
-    # Get user data
-    user_data = st.session_state.user_data
-    
-    # Create tabs
-    tabs = st.tabs(["Budget Overview", "Income Analysis", "Expense Analysis", "Budget Planning"])
-    
-    with tabs[0]:
-        # Budget Summary
-        st.markdown("### Budget Summary")
-        
-        # Calculate monthly totals
-        total_income = calculate_total_income(user_data["income"])
-        total_expenses = calculate_total_expenses(user_data["expenses"])
-        surplus_deficit = total_income - total_expenses
-        
-        # Display summary metrics
-        metrics = [
-            ("Total Monthly Income", format_currency(total_income), None),
-            ("Total Monthly Expenses", format_currency(total_expenses), None),
-            ("Monthly Surplus/Deficit", format_currency(surplus_deficit), 
-             format_percentage(surplus_deficit / total_income * 100 if total_income > 0 else 0))
+    # Create insights or load cached ones
+    if "insights" not in st.session_state:
+        st.session_state.insights = [
+            {
+                "title": "Spending Patterns",
+                "description": "Your highest expense category is Housing at 40% of your income. This is within the recommended 30-40% range.",
+                "type": "observation",
+                "pattern": "RAG"
+            },
+            {
+                "title": "Savings Opportunity",
+                "description": "You could save an additional $120/month by reducing food delivery expenses. Consider meal planning to reduce costs.",
+                "type": "recommendation",
+                "pattern": "Multi-Path Plan"
+            },
+            {
+                "title": "Investment Allocation",
+                "description": "Your current investment allocation is too conservative for your age and goals. Consider increasing equity exposure.",
+                "type": "warning",
+                "pattern": "Voting"
+            }
         ]
-        create_metric_columns(metrics)
+    
+    # Display insights with feedback
+    for i, insight in enumerate(st.session_state.insights):
+        if insight["type"] == "observation":
+            style = "info"
+        elif insight["type"] == "recommendation":
+            style = "success"
+        elif insight["type"] == "warning":
+            style = "warning"
+        else:
+            style = "info"
         
-        # Budget charts
-        st.markdown("### Budget Breakdown")
+        # Display the insight
+        getattr(st, style)(
+            f"### {insight['title']}\n\n"
+            f"{insight['description']}\n\n"
+            f"*Generated using {insight['pattern']} pattern*"
+        )
         
-        col1, col2 = st.columns(2)
+        # Add feedback UI for each insight
+        def handle_feedback(feedback):
+            if "insight_feedback" not in st.session_state:
+                st.session_state.insight_feedback = {}
+            st.session_state.insight_feedback[i] = feedback
+            
+            st.session_state.feedback_manager.record_insight_feedback(
+                user_id=user_data.get("personal", {}).get("id", 0),
+                insight=insight,
+                feedback=feedback
+            )
         
-        with col1:
-            budget_chart = visualizer.create_budget_chart(user_data)
-            display_chart(budget_chart, key="col1_budget_chart")
+        # Only show feedback UI if feedback hasn't been submitted for this insight
+        if "insight_feedback" not in st.session_state or i not in st.session_state.insight_feedback:
+            display_feedback_ui(insight["description"], handle_feedback)
         
-        with col2:
-            expense_pie = visualizer.create_expense_pie_chart(user_data["expenses"])
-            display_chart(expense_pie, key="col2_expense_pie")
-        
-        # Budget AI Analysis
-        st.markdown("### Budget Analysis")
-        
-        if st.button("Generate Budget Analysis"):
-            with st.spinner("Analyzing your budget..."):
-                # Get budget advice from budget agent
-                budget_agent = agent_manager.get_agent("budget")
-                budget_analysis = budget_agent.analyze_spending(user_data["expenses"])
-                
-                # Store in session state
-                st.session_state.agent_outputs["budget_analysis"] = budget_analysis
-        
-        # Display analysis if available
-        if "budget_analysis" in st.session_state.agent_outputs:
-            analysis = st.session_state.agent_outputs["budget_analysis"]
-            display_llm_response(analysis.get("analysis", ""), "Budget Analysis")
+        st.markdown("---")  # Add separator between insights
+    
+    # Display analysis if available
+    if "budget_analysis" in st.session_state.agent_outputs:
+        analysis = st.session_state.agent_outputs["budget_analysis"]
+        display_llm_response(analysis.get("analysis", ""), "Budget Analysis")
     
     with tabs[1]:
         # Income Analysis
@@ -726,7 +437,7 @@ def show_budget_view(components):
         income_display["Percentage"] = income_display["Percentage"].apply(lambda x: format_percentage(x))
         
         # Display table
-        display_dataframe(income_display)
+        display_dataframe(income_display, key="income_sources_detail_table")
         
         # Income history chart
         st.markdown("### Income History")
@@ -749,7 +460,7 @@ def show_budget_view(components):
             template="plotly_white"
         )
         
-        display_chart(income_trend, key="income_history_income_trend")
+        display_chart(income_trend, key="income_history_trend_chart")
     
     with tabs[2]:
         # Expense Analysis
@@ -769,17 +480,17 @@ def show_budget_view(components):
         expense_display["Percentage"] = expense_display["Percentage"].apply(lambda x: format_percentage(x))
         
         # Display table
-        display_dataframe(expense_display)
+        display_dataframe(expense_display, key="expense_categories_detail_table")
         
         # Expense pie chart
         st.markdown("### Expense Distribution")
         expense_pie = visualizer.create_expense_pie_chart(user_data["expenses"])
-        display_chart(expense_pie, key="expense_categories_pie")
+        display_chart(expense_pie, key="expense_distribution_detail_chart")
         
         # Spending Optimization
         st.markdown("### Spending Optimization")
         
-        if st.button("Find Savings Opportunities"):
+        if st.button("Find Savings Opportunities", key="find_savings_opportunities_detail_btn"):
             with st.spinner("Analyzing expenses for savings opportunities..."):
                 # Get savings opportunities from budget agent
                 budget_agent = agent_manager.get_agent("budget")
@@ -792,61 +503,6 @@ def show_budget_view(components):
         if "savings_opportunities" in st.session_state.agent_outputs:
             opps = st.session_state.agent_outputs["savings_opportunities"]
             display_llm_response(opps.get("opportunities", ""), "Savings Opportunities")
-    
-    with tabs[3]:
-        # Budget Planning
-        st.markdown("### Budget Planning")
-        
-        # Budget goals input
-        st.markdown("#### Budget Goals")
-        budget_goals = st.text_area(
-            "Enter your budget goals (one per line)",
-            value="Reduce discretionary spending by 10%\nSave 20% of income\nBuild emergency fund to 6 months of expenses",
-            height=100
-        )
-        
-        # Split into list
-        goal_list = [goal.strip() for goal in budget_goals.split("\n") if goal.strip()]
-        
-        if st.button("Create Budget Plan"):
-            with st.spinner("Creating personalized budget plan..."):
-                # Get budget plan from budget agent
-                budget_agent = agent_manager.get_agent("budget")
-                budget_plan = budget_agent.create_budget_plan(user_data, goal_list)
-                
-                # Store in session state
-                st.session_state.agent_outputs["budget_plan"] = budget_plan
-        
-        # Display budget plan if available
-        if "budget_plan" in st.session_state.agent_outputs:
-            plan = st.session_state.agent_outputs["budget_plan"]
-            display_llm_response(plan.get("budget_plan", ""), "Personalized Budget Plan")
-        
-        # Budget templates
-        st.markdown("#### Budget Templates")
-        
-        template_options = ["50/30/20 Budget", "Zero-Based Budget", "Envelope System", "Pay Yourself First"]
-        selected_template = st.selectbox("Select a budget template", template_options)
-        
-        if st.button("Get Template Details"):
-            with st.spinner("Loading template details..."):
-                # Get template details from knowledge base or LLM
-                llm_utils = components["llm_utils"]
-                template_details = llm_utils.generate_financial_explanation(
-                    f"{selected_template} budgeting method", "intermediate")
-                
-                # Store in session state
-                st.session_state.agent_outputs["budget_template"] = {
-                    "name": selected_template,
-                    "details": template_details
-                }
-        
-        # Display template details if available
-        if "budget_template" in st.session_state.agent_outputs:
-            template = st.session_state.agent_outputs["budget_template"]
-            
-            if template["name"] == selected_template:
-                display_llm_response(template["details"], template["name"])
 
 def show_investments_view(components):
     """Show the investment planner view."""
@@ -2192,6 +1848,141 @@ def show_advisor_view(components):
                 "role": "assistant",
                 "content": combined_response
             })
+
+def show_profile_view(components):
+    """Show the profile view with all user information."""
+    st.title("Profile")
+    
+    # Create tabs for different sections of the profile
+    tabs = create_tabs([
+        "Personal Info",
+        "Income",
+        "Expenses",
+        "Debt",
+        "Investments",
+        "Savings"
+    ])
+    
+    with tabs[0]:
+        render_profile_section(st.session_state.user_data)
+    
+    with tabs[1]:
+        render_income_section(st.session_state.user_data)
+    
+    with tabs[2]:
+        render_expenses_section(st.session_state.user_data)
+    
+    with tabs[3]:
+        render_debt_section(st.session_state.user_data)
+    
+    with tabs[4]:
+        render_investment_section(st.session_state.user_data)
+    
+    with tabs[5]:
+        render_savings_section(st.session_state.user_data)
+
+def show_budget_view(components):
+    """Show the budget planner view."""
+    st.markdown("<h2 class='sub-header'>Budget Planner</h2>", unsafe_allow_html=True)
+    
+    # Get components
+    agent_manager = components["agent_manager"]
+    visualizer = components["visualizer"]
+    data_loader = components["data_loader"]
+    
+    # Get user data
+    user_data = st.session_state.user_data
+    
+    # Create tabs
+    tabs = st.tabs(["Budget Overview", "Income & Expenses", "Budget Analysis"])
+    
+    with tabs[0]:
+        # Budget Overview
+        st.markdown("### Budget Overview")
+        
+        # Calculate totals
+        total_income = calculate_total_income(user_data["income"])
+        total_expenses = calculate_total_expenses(user_data["expenses"])
+        savings_rate = calculate_savings_rate(total_income, total_expenses)
+        
+        # Display metrics
+        metrics = [
+            ("Total Income", format_currency(total_income), None),
+            ("Total Expenses", format_currency(total_expenses), None),
+            ("Savings Rate", format_percentage(savings_rate), None)
+        ]
+        create_metric_columns(metrics)
+        
+        # Budget breakdown chart
+        st.markdown("### Budget Breakdown")
+        budget_chart = visualizer.create_budget_chart(user_data)
+        display_chart(budget_chart, key="budget_breakdown_chart")
+    
+    with tabs[1]:
+        # Income & Expenses
+        st.markdown("### Income & Expenses")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Income Analysis
+            st.markdown("#### Income Sources")
+            income_data = [{"Source": source, "Amount": amount} 
+                          for source, amount in user_data["income"].items()]
+            income_df = pd.DataFrame(income_data)
+            income_df["Percentage"] = income_df["Amount"] / income_df["Amount"].sum() * 100
+            
+            # Format for display
+            income_display = income_df.copy()
+            income_display["Amount"] = income_display["Amount"].apply(lambda x: format_currency(x))
+            income_display["Percentage"] = income_display["Percentage"].apply(lambda x: format_percentage(x))
+            display_dataframe(income_display, key="income_sources_table")
+        
+        with col2:
+            # Expense Analysis
+            st.markdown("#### Expense Categories")
+            expense_data = [{"Category": category, "Amount": amount} 
+                           for category, amount in user_data["expenses"].items()]
+            expense_df = pd.DataFrame(expense_data)
+            expense_df["Percentage"] = expense_df["Amount"] / expense_df["Amount"].sum() * 100
+            
+            # Format for display
+            expense_display = expense_df.copy()
+            expense_display["Amount"] = expense_display["Amount"].apply(lambda x: format_currency(x))
+            expense_display["Percentage"] = expense_display["Percentage"].apply(lambda x: format_percentage(x))
+            display_dataframe(expense_display, key="expense_categories_table")
+    
+    with tabs[2]:
+        # Budget Analysis
+        st.markdown("### Budget Analysis")
+        
+        if st.button("Analyze Budget"):
+            with st.spinner("Analyzing your budget..."):
+                # Get budget analysis from budget agent
+                budget_agent = agent_manager.get_agent("budget")
+                budget_analysis = budget_agent.analyze_budget(user_data)
+                
+                # Store in session state
+                st.session_state.agent_outputs["budget_analysis"] = budget_analysis
+        
+        # Display budget analysis if available
+        if "budget_analysis" in st.session_state.agent_outputs:
+            analysis = st.session_state.agent_outputs["budget_analysis"]
+            display_llm_response(analysis.get("analysis", ""), "Budget Analysis")
+        
+        # Spending Optimization
+        st.markdown("### Spending Optimization")
+        
+        if st.button("Find Savings Opportunities"):
+            with st.spinner("Analyzing expenses for savings opportunities..."):
+                budget_agent = agent_manager.get_agent("budget")
+                savings_opps = budget_agent.identify_savings_opportunities(user_data["expenses"])
+                st.session_state.agent_outputs["savings_opportunities"] = savings_opps
+        
+        # Display savings opportunities if available
+        if "savings_opportunities" in st.session_state.agent_outputs:
+            opps = st.session_state.agent_outputs["savings_opportunities"]
+            display_llm_response(opps.get("opportunities", ""), "Savings Opportunities")
 
 # Run the application
 if __name__ == "__main__":
