@@ -295,6 +295,56 @@ def show_dashboard_view(components):
         insights = st.session_state.agent_outputs["dashboard_insights"]
         display_llm_response(insights.get("consensus", ""), "Key Financial Insights")
 
+    # Add standalone feedback section
+    st.markdown("---")
+    st.markdown("### Feedback on Financial Insights")
+    
+    # Initialize feedback in session state if not exists
+    if "insight_feedback" not in st.session_state:
+        st.session_state.insight_feedback = []
+    
+    # Collect feedback
+    feedback_rating = st.slider(
+        "How helpful were the financial insights?",
+        min_value=1,
+        max_value=5,
+        value=3,
+        help="1 = Not helpful, 5 = Very helpful"
+    )
+    
+    feedback_comment = st.text_area(
+        "Any specific feedback or suggestions for improvement?",
+        placeholder="Your feedback helps improve future insights..."
+    )
+    
+    if st.button("Submit Feedback"):
+        # Store feedback
+        feedback = {
+            "timestamp": datetime.now().isoformat(),
+            "rating": feedback_rating,
+            "comment": feedback_comment
+        }
+        st.session_state.insight_feedback.append(feedback)
+        st.success("Thank you for your feedback!")
+    
+    # If feedback is low, offer to regenerate insights
+    if feedback_rating <= 2:
+        if st.button("Regenerate Insights with Feedback"):
+            with st.spinner("Generating improved insights..."):
+                # Create a prompt that incorporates the feedback
+                feedback_prompt = f"""
+                Previous insights: {insights.get('consensus', '')}
+                User feedback: {feedback_comment}
+                Rating: {feedback_rating}/5
+                
+                Please provide improved financial insights that address the user's feedback.
+                """
+                
+                # Get improved insights
+                improved_insights = agent_manager.get_holistic_advice(user_data, feedback_prompt)
+                st.session_state.agent_outputs["dashboard_insights"] = improved_insights
+                st.rerun()
+
 def show_profile_view(components):
     """Show the financial profile view for data entry."""
     st.markdown("<h2 class='sub-header'>Financial Profile</h2>", unsafe_allow_html=True)
