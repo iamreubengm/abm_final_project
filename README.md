@@ -2,7 +2,7 @@
 
 An intelligent, interactive financial planning app powered by Anthropic Claude and Streamlit. This tool helps users manage their finances, analyze spending habits, and receive AI-generated advice across budgeting, savings, investments, debt, and taxes.
 
-## 📖 Overview
+## Overview
 
 The AI Personal Financial Portal is a comprehensive financial management system that combines the power of AI with traditional financial planning tools. It uses Claude's advanced language model capabilities to provide personalized financial advice and insights, while maintaining user privacy and data security.
 
