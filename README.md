@@ -1,4 +1,4 @@
-# 💰 AI Personal Financial Portal
+# AI Personal Financial Portal
 
 An intelligent, interactive financial planning app powered by Anthropic Claude and Streamlit. This tool helps users manage their finances, analyze spending habits, and receive AI-generated advice across budgeting, savings, investments, debt, and taxes.
 
@@ -8,58 +8,58 @@ The AI Personal Financial Portal is a comprehensive financial management system 
 
 ---
 
-## 🚀 Features
+## Features
 
-- 🔍 **Personalized Financial Dashboard**  
+- **Personalized Financial Dashboard**  
   - Real-time overview of your financial health
   - Interactive charts and visualizations
   - Net worth tracking
   - Income and expense monitoring
   - Dynamic savings rate calculation
 
-- 🤖 **AI Financial Advisor**  
+- **AI Financial Advisor**  
   - Personalized financial recommendations
   - Goal-based planning assistance
   - Risk assessment and management
   - Holistic financial strategy development
   - Powered by Claude (Anthropic)
 
-- 📊 **Budget Analysis & Planning**  
+- **Budget Analysis & Planning**  
   - Detailed expense categorization
   - Spending pattern analysis
   - Custom budget creation
   - Monthly budget tracking
   - Automated expense insights
 
-- 📈 **Investment & Retirement Guidance**  
+- **Investment & Retirement Guidance**  
   - Portfolio analysis and optimization
   - Asset allocation recommendations
   - Retirement planning calculator
   - Investment risk assessment
   - Market insights and trends
 
-- 💳 **Debt Management Plans**  
+- **Debt Management Plans**  
   - Comprehensive debt overview
   - AI-generated repayment strategies
   - Debt avalanche/snowball calculators
   - Interest savings analysis
   - Progress tracking
 
-- 💡 **Savings Goal Planner**  
+- **Savings Goal Planner**  
   - Custom goal setting
   - Progress tracking
   - Monthly contribution calculations
   - Timeline projections
   - Milestone celebrations
 
-- 📚 **RAG-powered Explanations**  
+- **RAG-powered Explanations**  
   - In-depth financial education
   - Context-aware explanations
   - Customized learning paths
   - Real-world examples
   - Up-to-date financial information
 
-## ⚙️ Installation
+## Installation
 
 ### Windows
 
@@ -111,7 +111,7 @@ The AI Personal Financial Portal is a comprehensive financial management system 
    echo "ANTHROPIC_API_KEY=your_claude_api_key" > .env
    ```
 
-## 🚀 Usage
+## Usage
 
 1. **Start the application**
    ```bash
@@ -129,5 +129,3 @@ The AI Personal Financial Portal is a comprehensive financial management system 
    - Check AI insights
    - Track your goals
    - Analyze your investments
-
-   ## Hope this app takes you closer to your financial goals!
